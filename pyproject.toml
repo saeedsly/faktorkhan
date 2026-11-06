@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faktorkhan"
+version = "1.0.0"
+description = "Professional desktop invoice digitization: handwritten & thermal receipt OCR to Excel, with licensing & security."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Faktorkhan Team" }]
+license = { text = "MIT" }
+dependencies = [
+    "PyQt6>=6.6.0",
+    "Pillow>=10.0.0",
+    "opencv-python-headless>=4.8.0",
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.0",
+    "cryptography>=41.0.0",
+    "pytesseract>=0.3.10",
+    "python-dateutil>=2.8.0",
+]
+
+[project.scripts]
+faktorkhan = "faktorkhan.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["faktorkhan*"]

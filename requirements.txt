@@ -1,0 +1,12 @@
+PyQt6>=6.6.0
+Pillow>=10.0.0
+opencv-python-headless>=4.8.0
+pandas>=2.1.0
+openpyxl>=3.1.0
+cryptography>=41.0.0
+pytest>=8.0.0
+pytesseract>=0.3.10
+python-dateutil>=2.8.0
+
+# Optional OCR backends (install as needed):
+# easyocr>=1.7.0  # requires torch - heavy, excellent for handwritten receipts
