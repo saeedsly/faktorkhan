@@ -1,0 +1,397 @@
+{
+  "samples": 30,
+  "seconds_total": 25.564,
+  "field_accuracy_percent": {
+    "invoice_number": 0,
+    "issue_date": 100,
+    "subtotal": 0,
+    "discount": 33.3,
+    "taxable": 0,
+    "vat": 6.7,
+    "total": 0
+  },
+  "all_fields_correct_percent": 0,
+  "number_recall_percent": 11.4,
+  "item_name_recall_percent": 0,
+  "error_detection_rate_percent": 100,
+  "per_sample": [
+    {
+      "file": "inv_001.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_002.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_003.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_004.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_005.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_006.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_007.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_008.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_009.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_010.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_011.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_012.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_013.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_014.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_015.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_016.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_017.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_018.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_019.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_020.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_021.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_022.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_023.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_024.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_025.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_026.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_027.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_028.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_029.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "total"
+      ]
+    },
+    {
+      "file": "inv_030.png",
+      "all_fields_correct": false,
+      "checks_flagged_error": true,
+      "wrong": [
+        "invoice_number",
+        "subtotal",
+        "discount",
+        "taxable",
+        "vat",
+        "total"
+      ]
+    }
+  ]
+}

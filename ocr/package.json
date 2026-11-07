@@ -1,0 +1,17 @@
+{
+  "name": "faktorkhan-ocr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "خواننده‌ی فاکتور (OCR فارسی در مرورگر) و سیستم تست دقت",
+  "scripts": {
+    "install:vendor": "node scripts/copy-vendor.mjs",
+    "serve": "python3 scripts/serve.py",
+    "eval": "node eval/run_eval.mjs"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/fas": "1.0.0",
+    "tesseract.js": "7.0.0"
+  }
+}

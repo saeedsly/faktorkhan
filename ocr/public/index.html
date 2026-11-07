@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>فاکتورخوان — OCR فارسی</title>
+<style>
+  body { font-family: Tahoma, Vazirmatn, Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+  header { background: #1f4e79; color: #fff; padding: 14px 20px; }
+  main { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  section { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { margin: 0 0 12px; font-size: 16px; color: #1f4e79; }
+  button { background: #1f4e79; color: #fff; border: 0; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 15px; }
+  button:disabled { background: #9aa9bb; cursor: default; }
+  #preview { max-width: 100%; border: 1px solid #ddd; margin-top: 10px; display: none; }
+  #status { margin: 10px 0; font-size: 14px; min-height: 20px; }
+  progress { width: 100%; display: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: right; }
+  .ok { color: #1a7f37; font-weight: bold; } .bad { color: #c62828; font-weight: bold; }
+  pre { white-space: pre-wrap; background: #fafafa; border: 1px solid #eee; padding: 10px; border-radius: 6px; max-height: 420px; overflow: auto; direction: rtl; font-size: 14px; }
+  .note { font-size: 13px; color: #555; line-height: 1.8; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <strong>فاکتورخوان</strong> — خواندن فاکتور با OCR فارسی؛ کاملاً داخل مرورگر (بدون ارسال فایل به سرور)
+</header>
+<main>
+  <section>
+    <h2>۱. فاکتور را انتخاب کنید</h2>
+    <input type="file" id="file" accept="image/*">
+    <p class="note">عکس یا اسکن واضح فاکتور (ترجیحاً ۳۰۰ dpi یا بیشتر، بدون کج‌شدگی زیاد). بعد از اولین اجرا، مدل روی مرورگر ذخیره می‌شود و دیگر به اینترنت نیاز ندارد.</p>
+    <button id="run" disabled>خواندن فاکتور</button>
+    <progress id="progress" max="1" value="0"></progress>
+    <div id="status"></div>
+    <img id="preview" alt="پیش‌نمایش">
+  </section>
+  <section>
+    <h2>۲. فیلدهای استخراج‌شده و بررسی‌های حسابی</h2>
+    <table id="fields"><tbody><tr><td>هنوز نتیجه‌ای نیست.</td></tr></tbody></table>
+    <h2 style="margin-top:16px">بررسی‌های حسابی</h2>
+    <ul id="checks" class="note"></ul>
+  </section>
+  <section style="grid-column: 1 / -1">
+    <h2>۳. متن خوانده‌شده</h2>
+    <pre id="text"></pre>
+  </section>
+</main>
+<script src="vendor/tesseract/tesseract.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
