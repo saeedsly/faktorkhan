@@ -4,6 +4,7 @@
 //   node eval/run_eval.mjs                                   # موتور Tesseract داخل Node
 //   node eval/run_eval.mjs --server http://127.0.0.1:8000 --decode paddle   # سرور PP-OCRv5 محلی
 //   node eval/run_eval.mjs --server http://127.0.0.1:8000 --decode raw
+//   node eval/run_eval.mjs --server http://127.0.0.1:8000 --engine vlm     # Qwen3-VL (اگر --vlm-url داده شده)
 // آرگومان اختیاری آخر: تعداد نمونه‌ها (مثلاً 10).
 // گزارش در eval/report-<موتور>.json ذخیره می‌شود.
 import fs from "node:fs";
@@ -22,21 +23,28 @@ const opt = (name, def) => {
 };
 const serverUrl = opt("--server", null);
 const decode = opt("--decode", "paddle");
+const engine = opt("--engine", "rapid"); // rapid = PP-OCRv5؛ vlm = Qwen3-VL
 const positional = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1].startsWith("--")));
+if (!["rapid", "vlm"].includes(engine)) {
+  console.error(`--engine باید rapid یا vlm باشد، نه ${engine}`);
+  process.exit(1);
+}
 const cases = truth.slice(0, Number(positional[0] || truth.length));
 
 // تابع OCR: یا سرور محلی (PP-OCRv5) یا Tesseract
 let recognize;
 let engineLabel;
 if (serverUrl) {
-  engineLabel = `server-${decode}`;
+  const variant = engine === "vlm" ? "vlm" : decode;
+  engineLabel = `server-${variant}`;
   recognize = async (file) => {
     const form = new FormData();
     form.append("file", new Blob([fs.readFileSync(path.join(samples, file))], { type: "image/png" }), file);
-    const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/ocr`, { method: "POST", body: form });
+    const url = `${serverUrl.replace(/\/$/, "")}/api/ocr?engine=${engine}`;
+    const res = await fetch(url, { method: "POST", body: form });
     const body = await res.json();
     if (!res.ok) throw new Error(`سرور خطا داد (${res.status}): ${body.detail}`);
-    return body.variants?.[decode] ?? body.text;
+    return body.variants?.[variant] ?? body.text;
   };
 } else {
   engineLabel = "tesseract";

@@ -53,6 +53,26 @@ python -m server --models models --port 8000
 
 اگر وزن‌ها پیدا نشوند، سرور بالا می‌آید، دلیل را در `/api/health` می‌گوید و رابط به موتور مرورگر برمی‌گردد.
 
+### گزینه‌های اختیاری
+
+**تشخیص‌دهنده‌ی PP-OCRv6** (جدیدتر، Apache-2.0؛ مقایسه با v5 در eval):
+
+```bash
+python scripts/download_models.py --only-v6 --det-v6 small   # یا medium
+python -m server --models models --det-version v6 --port 8000
+```
+
+**Qwen3-VL برای دست‌نویس** (روی CPU کند است؛ مدل و mmproj را از Hugging Face بگیرید):
+
+```bash
+llama-server -m Qwen3-VL-8B-Instruct-Q4_K_M.gguf --mmproj mmproj-F16.gguf --port 8080
+python -m server --models models --vlm-url http://127.0.0.1:8080 --port 8000
+```
+
+در رابط، گزینه‌ی «Qwen3-VL» فقط وقتی ظاهر می‌شود که llama-server در دسترس باشد.
+
+مقایسه‌ی موتورها و منابع: `RESEARCH.md`.
+
 ## ۴. سیستم تست دقت
 
 ### ۴.۱ نمونه‌های ساختگی (از ریشه‌ی ریپو، نیاز به وابستگی‌های faktorkhan)
@@ -69,6 +89,7 @@ python ocr/eval/generate_samples.py 30
 cd ocr
 node eval/run_eval.mjs --server http://127.0.0.1:8000 --decode paddle
 node eval/run_eval.mjs --server http://127.0.0.1:8000 --decode raw
+node eval/run_eval.mjs --server http://127.0.0.1:8000 --engine vlm   # Qwen3-VL (اگر --vlm-url داده شده)
 node eval/run_eval.mjs                    # موتور Tesseract (بدون سرور)
 ```
 
@@ -92,6 +113,7 @@ node eval/run_eval.mjs                    # موتور Tesseract (بدون سر�
 
 ## ۶. محدودیت‌های شناخته‌شده
 
+- **منابع متضاد درباره‌ی ترتیب:** پروژه‌ی Persian-OCR-App ادعا می‌کند خروجی PP-OCRv5 عربی از قبل منطقی است و نباید معکوس شود. کد PaddleOCR برای دیکشنری‌های عربی معکوس می‌کند. این را فقط eval روی نمونه‌ها حل می‌کند.
 - **معکوس‌سازی ارقام فارسی:** کد PaddleOCR برای دیکشنری‌های عربی، متن را برمی‌گرداند؛ قطعه‌های لاتین و ارقام ASCII را نگه می‌دارد ولی هر رقم فارسی را جدا معکوس می‌کند. یعنی `۱۲۳` ممکن است `۳۲۱` شود، اگر مدل خروجی را در ترتیب بصری بدهد. این را فقط با اندازه‌گیری روی نمونه‌ها می‌شود فهمید؛ دو حالت `paddle` و `raw` را مقایسه کنید.
 - **جدول‌ها:** PP-OCRv5 متن را خط‌به‌خط می‌خواند و ساختار جدول را حفظ نمی‌کند. فیلدها از روی برچسب‌ها و نزدیک‌ترین عدد استخراج می‌شوند؛ جدول‌های پیچیده ممکن است جابه‌جا شوند.
 - **دست‌نویس:** PP-OCRv5 برای متن چاپی بهینه است؛ دست‌نویس را فقط با نمونه‌ی واقعی می‌توان سنجید. این مرحله هنوز انجام نشده است.

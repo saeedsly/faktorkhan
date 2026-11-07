@@ -21,8 +21,13 @@ async function checkServer() {
     const res = await fetch("api/health", { cache: "no-store" });
     const body = await res.json();
     serverOk = Boolean(body.ok);
+    const vlmOk = Boolean(body.engines?.vlm?.ok);
+    if (vlmOk && !document.querySelector('#engine option[value="vlm"]')) {
+      const option = new Option("Qwen3-VL — دست‌نویس (کندتر، اختیاری)", "vlm");
+      $("engine").insertBefore(option, $("engine").querySelector('option[value="browser"]'));
+    }
     $("engineInfo").textContent = serverOk
-      ? `سرور محلی آماده است: ${body.engine}.`
+      ? `سرور محلی آماده است: ${body.engine}.${vlmOk ? " Qwen3-VL هم در دسترس است." : ""}`
       : `سرور محلی آماده نیست (${body.error}). از موتور داخل مرورگر استفاده می‌شود.`;
   } catch {
     serverOk = false;
@@ -31,11 +36,13 @@ async function checkServer() {
   $("engine").value = serverOk ? "server" : "browser";
 }
 
-async function recognizeOnServer(file) {
+async function recognizeOnServer(file, engineKey) {
   const form = new FormData();
   form.append("file", file);
-  $("status").textContent = "در حال خواندن با سرور محلی…";
-  const res = await fetch("api/ocr", { method: "POST", body: form });
+  $("status").textContent = engineKey === "vlm"
+    ? "در حال خواندن با Qwen3-VL (روی CPU ممکن است چند دقیقه طول بکشد)…"
+    : "در حال خواندن با سرور محلی…";
+  const res = await fetch(`api/ocr?engine=${engineKey}`, { method: "POST", body: form });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || `خطای سرور (${res.status})`);
   const alt = body.variants
@@ -45,7 +52,7 @@ async function recognizeOnServer(file) {
     text: body.text,
     alt: alt ? alt[1] : null,
     seconds: body.seconds,
-    info: `${body.engine}، حالت ترتیب: ${body.decode}`,
+    info: body.decode === "vlm" ? `${body.engine}` : `${body.engine}، حالت ترتیب: ${body.decode}`,
   };
 }
 
@@ -92,8 +99,9 @@ $("run").addEventListener("click", async () => {
   $("progress").style.display = "block";
   $("progress").value = 0;
   try {
-    const useServer = $("engine").value === "server" && serverOk;
-    const result = useServer ? await recognizeOnServer(file) : await recognizeInBrowser(file);
+    const choice = $("engine").value;
+    const useServer = choice !== "browser" && serverOk;
+    const result = useServer ? await recognizeOnServer(file, choice) : await recognizeInBrowser(file);
     const fields = extractFields(result.text);
     renderResults(result, fields);
   } catch (err) {
