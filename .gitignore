@@ -14,3 +14,4 @@ ocr/public/vendor/
 ocr/eval/samples/
 ocr/models/
 ocr/**/__pycache__/
+ocr/eval/out/

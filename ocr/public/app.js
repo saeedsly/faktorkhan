@@ -1,4 +1,4 @@
-import { extractFields, runChecks } from "./extract.js";
+import { extractFields, runChecks, repairFields } from "./extract.js";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => (v === null || v === undefined ? "—" : v.toLocaleString("fa-IR"));
@@ -102,8 +102,8 @@ $("run").addEventListener("click", async () => {
     const choice = $("engine").value;
     const useServer = choice !== "browser" && serverOk;
     const result = useServer ? await recognizeOnServer(file, choice) : await recognizeInBrowser(file);
-    const fields = extractFields(result.text);
-    renderResults(result, fields);
+    const repaired = repairFields(extractFields(result.text));
+    renderResults(result, repaired);
   } catch (err) {
     $("status").textContent = "خطا: " + err.message;
   } finally {
@@ -112,7 +112,10 @@ $("run").addEventListener("click", async () => {
   }
 });
 
-function renderResults(result, fields) {
+function renderResults(result, repaired) {
+  const fields = repaired.fields;
+  const changed = new Set(repaired.corrections.map((c) => c.field));
+  const derived = new Set(repaired.derived.map((d) => d.field));
   $("status").textContent = `خواندن تمام شد (${result.seconds} ثانیه) — ${result.info}.`;
   $("fields").innerHTML =
     "<tbody>" +
@@ -120,10 +123,26 @@ function renderResults(result, fields) {
       .map(([k, label]) => {
         const v = fields[k];
         const shown = typeof v === "number" ? fmt(v) : v ?? "—";
-        return `<tr><th>${label}</th><td>${shown}</td></tr>`;
+        const mark = changed.has(k) ? " (اصلاح‌شده)" : derived.has(k) ? " (محاسبه‌شده)" : "";
+        const style = changed.has(k) ? ' style="background:#fff3cd"' : derived.has(k) ? ' style="background:#e7f1ff"' : "";
+        return `<tr><th>${label}</th><td${style}>${shown}${mark}</td></tr>`;
       })
       .join("") +
     "</tbody>";
+
+  // افشای کامل تغییرات: هیچ عددی بی‌اطلاع عوض نمی‌شود
+  const notes = [];
+  for (const c of repaired.corrections) {
+    notes.push(`<li class="bad">اصلاح خودکار: ${LABELS[c.field]} از ${fmt(c.from)} به ${fmt(c.to)} (تغییر یک رقم بر اساس معادله‌ی فاکتور؛ اگر درست نیست، عدد اصلی را در فاکتور بررسی کنید)</li>`);
+  }
+  for (const d of repaired.derived) {
+    notes.push(`<li>${LABELS[d.field]} محاسبه شد: ${fmt(d.value)} (${d.reason})</li>`);
+  }
+  if (repaired.ambiguous) {
+    notes.push(`<li class="bad">چند تصحیح هم‌هزینه ممکن است؛ هیچ عددی تغییر نکرد. لطفاً ارقام را از روی فاکتور کنترل کنید.</li>`);
+  }
+  $("repairs").innerHTML = notes.join("");
+
   const checks = runChecks(fields);
   $("checks").innerHTML = checks.length
     ? checks

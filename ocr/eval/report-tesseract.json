@@ -1,21 +1,44 @@
 {
   "engine": "tesseract",
+  "tess_model": "4.0.0_best_int",
   "samples": 30,
-  "seconds_total": 27.224,
+  "seconds_total": 7.813,
   "field_accuracy_percent": {
     "invoice_number": 0,
     "issue_date": 100,
-    "subtotal": 0,
-    "discount": 33.3,
-    "taxable": 0,
-    "vat": 6.7,
+    "subtotal": 10,
+    "discount": 36.7,
+    "taxable": 3.3,
+    "vat": 13.3,
     "total": 0
   },
   "all_fields_correct_percent": 0,
-  "number_recall_percent": 11.4,
+  "number_recall_percent": 13.2,
   "item_name_recall_percent": 0,
   "error_detection_rate_percent": 100,
   "check_false_alarm_count": 0,
+  "after_repair": {
+    "field_accuracy_percent": {
+      "invoice_number": 0,
+      "issue_date": 100,
+      "subtotal": 10,
+      "discount": 36.7,
+      "taxable": 3.3,
+      "vat": 13.3,
+      "total": 0
+    },
+    "all_fields_correct_percent": 0,
+    "error_detection_rate_percent": 100,
+    "check_false_alarm_count": 0,
+    "corrections_applied": 0,
+    "corrections_correct": 0,
+    "corrections_wrong": 0,
+    "samples_with_correction": 0,
+    "samples_ambiguous_not_applied": 0,
+    "derived_fields": 0,
+    "derived_fields_correct": 0,
+    "samples_fixed_to_all_correct": 0
+  },
   "most_missed_numbers": [
     {
       "number": 15,
@@ -106,7 +129,22 @@
         7822000,
         8525980,
         10096000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_002.png",
@@ -117,18 +155,30 @@
         "subtotal",
         "discount",
         "taxable",
-        "vat",
         "total"
       ],
       "missing_numbers": [
         13,
-        11970,
         131000,
         133000,
         144970,
         1570000,
         1703000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_003.png",
@@ -151,7 +201,21 @@
         12099000,
         21930000,
         23903700
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_004.png",
@@ -159,7 +223,6 @@
       "checks_flagged_error": true,
       "wrong": [
         "invoice_number",
-        "subtotal",
         "discount",
         "taxable",
         "vat",
@@ -177,9 +240,22 @@
         5945950,
         7707390,
         12526000,
-        13653340,
-        17589000
-      ]
+        13653340
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_005.png",
@@ -198,7 +274,21 @@
         673650,
         7485000,
         8158650
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_006.png",
@@ -228,7 +318,22 @@
         10986000,
         11974740,
         19232000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_007.png",
@@ -256,7 +361,21 @@
         14208150,
         25710000,
         28023900
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_008.png",
@@ -278,7 +397,21 @@
         4570370,
         6149000,
         6702410
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_009.png",
@@ -309,7 +442,22 @@
         1741000,
         1897690,
         2966000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_010.png",
@@ -337,7 +485,21 @@
         16990920,
         28092000,
         30620280
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_011.png",
@@ -369,7 +531,22 @@
         24597000,
         25367000,
         26810730
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_012.png",
@@ -387,7 +564,21 @@
         437000,
         4370000,
         4763300
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_013.png",
@@ -413,7 +604,21 @@
         5035800,
         12538000,
         13666420
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_014.png",
@@ -437,7 +642,20 @@
         10155530,
         15876000,
         17304840
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_015.png",
@@ -468,7 +686,22 @@
         14506000,
         15811540,
         18906000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_016.png",
@@ -478,7 +711,6 @@
         "invoice_number",
         "subtotal",
         "discount",
-        "taxable",
         "vat",
         "total"
       ],
@@ -491,12 +723,25 @@
         123000,
         365000,
         488000,
-        517000,
         540640,
         563530,
         861000,
         1005000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_017.png",
@@ -523,7 +768,22 @@
         7329000,
         7988610,
         8670000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_018.png",
@@ -531,7 +791,6 @@
       "checks_flagged_error": true,
       "wrong": [
         "invoice_number",
-        "subtotal",
         "discount",
         "taxable",
         "vat",
@@ -548,9 +807,22 @@
         5003100,
         5514000,
         9270000,
-        10104300,
-        14784000
-      ]
+        10104300
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_019.png",
@@ -577,7 +849,22 @@
         5171000,
         5223000,
         5636390
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_020.png",
@@ -602,7 +889,22 @@
         12275000,
         12975360,
         13018960
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_021.png",
@@ -628,7 +930,22 @@
         3792000,
         4133280,
         4182000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_022.png",
@@ -654,7 +971,21 @@
         5598240,
         9992000,
         10891280
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_023.png",
@@ -662,8 +993,6 @@
       "checks_flagged_error": true,
       "wrong": [
         "invoice_number",
-        "subtotal",
-        "discount",
         "taxable",
         "vat",
         "total"
@@ -678,10 +1007,21 @@
         3049820,
         3680000,
         4011200,
-        10920000,
-        11654000,
-        15334000
-      ]
+        10920000
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_024.png",
@@ -703,7 +1043,22 @@
         431640,
         4840000,
         5236000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_025.png",
@@ -725,7 +1080,21 @@
         2371840,
         3266000,
         3559940
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_026.png",
@@ -736,7 +1105,6 @@
         "subtotal",
         "discount",
         "taxable",
-        "vat",
         "total"
       ],
       "missing_numbers": [
@@ -744,14 +1112,27 @@
         18,
         489000,
         701000,
-        881550,
         1082370,
         1110000,
         9594180,
         9795000,
         10676550,
         10905000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_027.png",
@@ -783,7 +1164,22 @@
         7180920,
         7561000,
         14149000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_028.png",
@@ -815,7 +1211,22 @@
         30662000,
         33122000,
         33421580
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_029.png",
@@ -843,7 +1254,21 @@
         11131000,
         11154000,
         12132790
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     },
     {
       "file": "inv_030.png",
@@ -865,7 +1290,22 @@
         2340230,
         4055000,
         6202000
-      ]
+      ],
+      "repair": {
+        "ambiguous": false,
+        "corrections": [],
+        "derived": [],
+        "wrong_after_repair": [
+          "invoice_number",
+          "subtotal",
+          "discount",
+          "taxable",
+          "vat",
+          "total"
+        ],
+        "all_fields_correct_after_repair": false,
+        "checks_flagged_after_repair": true
+      }
     }
   ]
 }
