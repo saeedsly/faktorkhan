@@ -8,11 +8,20 @@ setlocal
 cd /d "%~dp0\.."
 echo === OCR setup ===
 
+rem Each candidate is tested by actually running it; a missing version is skipped.
 set "PY="
-where py >nul 2>nul && set "PY=py -3.11"
-if "%PY%"=="" where py >nul 2>nul && set "PY=py -3"
-if "%PY%"=="" where python >nul 2>nul && set "PY=python"
-if "%PY%"=="" goto no_python
+py -3.11 -V >nul 2>nul
+if not errorlevel 1 set "PY=py -3.11"
+if defined PY goto have_python
+py -3 -V >nul 2>nul
+if not errorlevel 1 set "PY=py -3"
+if defined PY goto have_python
+python -V >nul 2>nul
+if not errorlevel 1 set "PY=python"
+if defined PY goto have_python
+goto no_python
+:have_python
+echo Using Python: %PY%
 
 if exist ".venv\Scripts\python.exe" goto venv_ready
 echo Creating virtual environment with: %PY%
@@ -58,9 +67,14 @@ pause
 exit /b 0
 
 :no_python
-echo Python was not found.
-echo Install Python 3.11 (64-bit) from https://www.python.org/downloads/
-echo and tick "Add python.exe to PATH", then run this file again.
+echo.
+echo Python 3.11 was not found on this computer.
+echo The Python launcher may exist, but it has no 3.11 installed.
+echo.
+echo Fix: install Python 3.11 (64-bit) from https://www.python.org/downloads/
+echo   - tick "Add python.exe to PATH" on the first screen
+echo   - or in a terminal run:  winget install -e --id Python.Python.3.11
+echo Then CLOSE this window, open windows\install.bat again.
 pause
 exit /b 1
 
