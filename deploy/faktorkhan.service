@@ -1,0 +1,29 @@
+# ──────────────────────────────────────────────────────────────
+#  فاکتورخوان — سرویس systemd (لینوکس)
+#    sudo cp deploy/faktorkhan.service /etc/systemd/system/
+#    sudo systemctl daemon-reload && sudo systemctl enable --now faktorkhan
+# ──────────────────────────────────────────────────────────────
+[Unit]
+Description=FactorKhan — سامانه هوشمند خوانش فاکتور
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=faktor
+Group=faktor
+WorkingDirectory=/opt/faktorkhan/backend
+EnvironmentFile=/opt/faktorkhan/.env
+ExecStart=/opt/faktorkhan/venv/bin/gunicorn app.main:app \
+    -k uvicorn.workers.UvicornWorker -w 2 -b 127.0.0.1:8000 \
+    --timeout 300 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

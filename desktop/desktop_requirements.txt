@@ -1,0 +1,7 @@
+# وابستگی های نسخه رومیزی (روی ویندوز)
+-r ../backend/requirements.txt
+pywebview>=5.0
+pyinstaller>=6.3
+# اختیاری: خوانش تصویر به صورت لوکال (نیازمند نصب Tesseract در ویندوز)
+# pytesseract>=0.3
+# pillow>=10

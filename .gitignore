@@ -1,0 +1,32 @@
+# ── پایتون ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ── داده و رازها (هرگز commit نشوند) ──
+storage/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!frontend/assets/fonts/*
+
+# ── خروجی ساخت ──
+build/
+dist/
+desktop/dist/
+desktop/build/
+*.spec.bak
+node_modules/
+
+# ── سیستم ──
+.DS_Store
+Thumbs.db
+*.log

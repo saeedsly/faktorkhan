@@ -1,0 +1,14 @@
+{
+  "name": "فاکتورخوان — سامانه هوشمند خوانش فاکتور",
+  "short_name": "فاکتورخوان",
+  "description": "خوانش و مدیریت فاکتورهای چاپی، حرارتی و دست‌نویس",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080d1a",
+  "theme_color": "#080d1a",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    { "src": "/assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────
+#  فاکتورخوان — استقرار یک‌فرمانی
+#    cp .env.example .env   ←  مقادیر را پر کنید
+#    docker compose up -d
+#  اثر: سعید سالاری
+# ──────────────────────────────────────────────────────────────
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_persian_ci
+      --max_connections=200
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-faktorkhan}
+      MARIADB_USER: ${MYSQL_USER:-faktor}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:-faktorpass}
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./mysql/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY را در .env تنظیم کنید}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY را در .env تنظیم کنید}
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-faktor}:${MYSQL_PASSWORD:-faktorpass}@db:3306/${MYSQL_DATABASE:-faktorkhan}?charset=utf8mb4
+      CLOUD_OCR_GATEWAY: ${CLOUD_OCR_GATEWAY:-}
+      CLOUD_OCR_SEED_TOKEN: ${CLOUD_OCR_SEED_TOKEN:-}
+      OWNER_NAME: ${OWNER_NAME:-سعید سالاری}
+      OWNER_EMAIL: ${OWNER_EMAIL:-owner@localhost}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      TRIAL_DAYS: ${TRIAL_DAYS:-14}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      DATA_DIR: /data
+    volumes:
+      - app-data:/data
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/system/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    profiles: ["proxy"]
+
+volumes:
+  db-data:
+  app-data:
