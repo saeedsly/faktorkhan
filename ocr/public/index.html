@@ -31,7 +31,16 @@
   <section>
     <h2>۱. فاکتور را انتخاب کنید</h2>
     <input type="file" id="file" accept="image/*">
-    <p class="note">عکس یا اسکن واضح فاکتور (ترجیحاً ۳۰۰ dpi یا بیشتر، بدون کج‌شدگی زیاد). بعد از اولین اجرا، مدل روی مرورگر ذخیره می‌شود و دیگر به اینترنت نیاز ندارد.</p>
+    <p>
+      <label>موتور:
+        <select id="engine">
+          <option value="server">سرور محلی — PP-OCRv5 فارسی (پیشنهادی)</option>
+          <option value="browser">داخل مرورگر — Tesseract (پشتیبان)</option>
+        </select>
+      </label>
+    </p>
+    <p class="note" id="engineInfo">در حال بررسی سرور محلی…</p>
+    <p class="note">عکس یا اسکن واضح فاکتور (ترجیحاً ۳۰۰ dpi یا بیشتر، بدون کج‌شدگی زیاد).</p>
     <button id="run" disabled>خواندن فاکتور</button>
     <progress id="progress" max="1" value="0"></progress>
     <div id="status"></div>
@@ -46,6 +55,10 @@
   <section style="grid-column: 1 / -1">
     <h2>۳. متن خوانده‌شده</h2>
     <pre id="text"></pre>
+    <details id="altBlock" style="display:none">
+      <summary>حالت دیگر معکوس‌سازی متن (برای مقایسه‌ی ارقام)</summary>
+      <pre id="altText"></pre>
+    </details>
   </section>
 </main>
 <script src="vendor/tesseract/tesseract.min.js"></script>

@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "خواننده‌ی فاکتور (OCR فارسی در مرورگر) و سیستم تست دقت",
+  "description": "فاکتورخوان: OCR فارسی (سرور محلی PP-OCRv5 روی CPU، و پشتیبان داخل مرورگر) + سیستم تست دقت",
   "scripts": {
     "install:vendor": "node scripts/copy-vendor.mjs",
-    "serve": "python3 scripts/serve.py",
+    "serve": "python -m server --port 8000",
     "eval": "node eval/run_eval.mjs"
   },
   "dependencies": {

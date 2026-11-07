@@ -12,3 +12,5 @@ build/
 ocr/node_modules/
 ocr/public/vendor/
 ocr/eval/samples/
+ocr/models/
+ocr/**/__pycache__/
