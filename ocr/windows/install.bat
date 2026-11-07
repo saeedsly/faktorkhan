@@ -38,13 +38,17 @@ echo Leave a prompt empty to skip the handwriting engine.
 set "LLAMA_DIR="
 set "MODEL_GGUF="
 set "MMPROJ="
+set "EBOO_TOKEN="
 set /p "LLAMA_DIR=Folder that contains llama-server.exe: "
 set /p "MODEL_GGUF=Full path to the model .gguf file: "
 set /p "MMPROJ=Full path to the mmproj-*.gguf file (needed for images): "
+echo Optional: eBoo cloud API token. It is saved only in windows\config.bat (not in Git).
+set /p "EBOO_TOKEN=eBoo API token (Enter to skip): "
 (
   echo set "LLAMA_DIR=%LLAMA_DIR%"
   echo set "MODEL_GGUF=%MODEL_GGUF%"
   echo set "MMPROJ=%MMPROJ%"
+  echo set "EBOO_TOKEN=%EBOO_TOKEN%"
 ) > "windows\config.bat"
 echo Saved settings to windows\config.bat
 

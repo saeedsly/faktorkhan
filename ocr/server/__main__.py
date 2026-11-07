@@ -57,6 +57,17 @@ def main(argv: list[str] | None = None) -> int:
             errors["vlm"] = status["error"]
             print(f"هشدار: موتور VLM در دسترس نیست: {status['error']}", file=sys.stderr, flush=True)
 
+    # eBoo (ابری، اختیاری): فقط وقتی متغیر محیطی EBOO_TOKEN تنظیم شده باشد
+    from .eboo import engine_from_env
+    try:
+        ebo = engine_from_env()
+    except ValueError as exc:
+        ebo = None
+        errors["ebo"] = str(exc)
+    if ebo is not None:
+        engines["ebo"] = ebo
+        print("موتور eBoo فعال است؛ تصویرها برای سرور ایبو فرستاده می‌شوند.", flush=True)
+
     if args.check:
         return 0 if engines.get("rapid") is not None else 1
 

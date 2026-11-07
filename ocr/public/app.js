@@ -22,12 +22,16 @@ async function checkServer() {
     const body = await res.json();
     serverOk = Boolean(body.ok);
     const vlmOk = Boolean(body.engines?.vlm?.ok);
-    if (vlmOk && !document.querySelector('#engine option[value="vlm"]')) {
-      const option = new Option("Qwen3-VL — دست‌نویس (کندتر، اختیاری)", "vlm");
+    const eboOk = Boolean(body.engines?.ebo?.ok);
+    const addOption = (value, label) => {
+      if (document.querySelector(`#engine option[value="${value}"]`)) return;
+      const option = new Option(label, value);
       $("engine").insertBefore(option, $("engine").querySelector('option[value="browser"]'));
-    }
+    };
+    if (vlmOk) addOption("vlm", "Qwen3-VL — دست‌نویس (کندتر، اختیاری)");
+    if (eboOk) addOption("ebo", "eBoo API — ابری (اختیاری؛ تصویر به سرور ایبو فرستاده می‌شود)");
     $("engineInfo").textContent = serverOk
-      ? `سرور محلی آماده است: ${body.engine}.${vlmOk ? " Qwen3-VL هم در دسترس است." : ""}`
+      ? `سرور محلی آماده است: ${body.engine}.${vlmOk ? " Qwen3-VL هم در دسترس است." : ""}${eboOk ? " eBoo API هم فعال است." : ""}`
       : `سرور محلی آماده نیست (${body.error}). از موتور داخل مرورگر استفاده می‌شود.`;
   } catch {
     serverOk = false;
@@ -36,12 +40,15 @@ async function checkServer() {
   $("engine").value = serverOk ? "server" : "browser";
 }
 
-async function recognizeOnServer(file, engineKey) {
+async function recognizeOnServer(file, choice) {
+  // مقدار گزینه‌ی «سرور محلی» همان موتور rapid است
+  const engineKey = choice === "server" ? "rapid" : choice;
   const form = new FormData();
   form.append("file", file);
-  $("status").textContent = engineKey === "vlm"
-    ? "در حال خواندن با Qwen3-VL (روی CPU ممکن است چند دقیقه طول بکشد)…"
-    : "در حال خواندن با سرور محلی…";
+  $("status").textContent = {
+    vlm: "در حال خواندن با Qwen3-VL (روی CPU ممکن است چند دقیقه طول بکشد)…",
+    ebo: "در حال ارسال به سرور ایبو و خواندن متن…",
+  }[engineKey] || "در حال خواندن با سرور محلی…";
   const res = await fetch(`api/ocr?engine=${engineKey}`, { method: "POST", body: form });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || `خطای سرور (${res.status})`);
@@ -52,7 +59,7 @@ async function recognizeOnServer(file, engineKey) {
     text: body.text,
     alt: alt ? alt[1] : null,
     seconds: body.seconds,
-    info: body.decode === "vlm" ? `${body.engine}` : `${body.engine}، حالت ترتیب: ${body.decode}`,
+    info: ["vlm", "ebo"].includes(body.decode) ? `${body.engine}` : `${body.engine}، حالت ترتیب: ${body.decode}`,
   };
 }
 
