@@ -93,6 +93,14 @@ build_windows.bat
 ISCC installer\faktorkhan.iss
 ```
 
+### الف-۰) ویندوز ۷ یا WAMP دارید؟
+
+| هدف | راه |
+|---|---|
+| تست سریع سرویس ابری روی WAMP/htdocs | `faktorkhan-php-htdocs.zip` → در `www` باز کنید → [docs/PHP-HTTPDOCKS-FA.md](docs/PHP-HTTPDOCKS-FA.md) |
+| اجرای کامل روی ویندوز ۷ | پایتون ۳.۸.۱۰ + `START-WINDOWS.bat` → [docs/WINDOWS-7-FA.md](docs/WINDOWS-7-FA.md) |
+| ویندوز ۱۰/۱۱ | بستهٔ PORTABLE → `START-WINDOWS.bat` |
+
 ### الف-۱) فعال کردن خوانش ابری (فقط توکن لازم است)
 
 آدرس درگاه از قبل داخل برنامه است؛ کافی است توکن را ثبت کنید:
