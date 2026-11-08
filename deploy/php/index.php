@@ -75,6 +75,11 @@ if ($api !== '') {
                 'text' => (string) ($job['text'] ?? ''),
                 'pages' => (int) ($job['pages'] ?? 0),
                 'saved' => (string) ($job['saved'] ?? ''),
+                'saved_bytes' => (int) ($job['saved_bytes'] ?? 0),
+                'txt_file' => (string) ($job['txt_file'] ?? ''),
+                'charcount' => (int) ($job['charcount'] ?? 0),
+                'out_kind' => (string) ($job['out_kind'] ?? ''),
+                'docx_rebuilt' => !empty($job['docx_rebuilt']),
                 'cleanup' => !empty($job['cleanup_pending']),
                 'real_progress' => !empty($job['real_progress']),
                 'slow' => !empty($job['slow']),
@@ -107,6 +112,39 @@ if ($api !== '') {
         $job['message'] = 'کار توسط شما لغو شد.';
         job_save($job);
         json_out(array('ok' => true));
+    }
+
+    /* ── حذف فایل‌های ذخیره‌شدهٔ یک کار (متن در کار می‌ماند) ─── */
+    if ($api === 'deletefiles') {
+        $id = (string) ($_GET['id'] ?? '');
+        $job = job_load($id);
+        if ($job === null) {
+            json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
+        }
+        $freeSession();
+        $job = job_delete_files($job);
+        json_out(array('ok' => true, 'saved' => '', 'txt_file' => ''));
+    }
+
+    /* ── دانلود فایل‌های همین کار (متن TXT یا فایل Word) ───── */
+    if ($api === 'file') {
+        $id = (string) ($_GET['id'] ?? '');
+        $job = job_load($id);
+        if ($job === null) {
+            json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
+        }
+        $want = (string) ($_GET['f'] ?? 'txt');
+        $name = $want === 'doc' ? (string) ($job['saved'] ?? '') : (string) ($job['txt_file'] ?? '');
+        if ($name === '') {
+            json_out(array('ok' => false,
+                'message' => $want === 'doc'
+                    ? 'برای این کار فایل Wordی ذخیره نشده؛ متن را از همین صفحه بردارید.'
+                    : 'برای این کار فایل متنی ذخیره نشده است.'), 404);
+        }
+        $freeSession();
+        $base = (string) ($job['name'] ?? 'invoice');
+        $base = preg_replace('/\.[A-Za-z0-9]{1,6}$/', '', $base);
+        send_upload_file($name, ($base !== '' ? $base : 'invoice') . ($want === 'doc' ? '-word' : '-text'));
     }
 
     /* ── شروع کار (آپلود) ──────────────────────────────────── */
@@ -168,7 +206,10 @@ if ($api !== '') {
         }
 
         $method = max(1, min(4, (int) ($_POST['method'] ?? 4)));
-        $output = (string) ($_POST['output'] ?? 'txt');
+        $output = (string) ($_POST['output'] ?? 'keeplayout');
+        if (!in_array($output, array('keeplayout', 'txt', 'txtraw', 'txtrawjson', 'jsoncoordinates', ''), true)) {
+            $output = 'keeplayout';
+        }
         $deleteAfter = !empty($_POST['delete_after']);
 
         /* فایل را روی همین سرور نگه می‌داریم؛ ارسال به سرویس ابری در
@@ -403,6 +444,13 @@ if ($logged) {
   td:last-child{color:var(--txt);text-align:left}
   pre{background:#0a0d14;border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;
       white-space:pre-wrap;direction:rtl;font-size:13px;max-height:440px;font-family:Vazirmatn,Tahoma,monospace}
+  #text{width:100%;min-height:260px;max-height:70vh;resize:vertical;background:#0a0d14;color:var(--txt);
+        border:1px solid var(--line);border-radius:12px;padding:14px;font-size:14px;line-height:2.1;
+        font-family:Vazirmatn,Tahoma,system-ui,sans-serif;direction:rtl;white-space:pre-wrap}
+  #text:focus{outline:none;border-color:var(--gold)}
+  .textbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 8px}
+  .textbar button{padding:7px 12px;font-size:12px;font-weight:600}
+  .textbar .sp{flex:1}
   .ltr{direction:ltr;text-align:left;font-family:ui-monospace,monospace}
   .foot{color:#5d6779;font-size:11px;text-align:center;margin:20px 0 10px}
   a{color:var(--gold)}
@@ -520,14 +568,14 @@ if ($logged) {
           <div>
             <label>قالب خروجی</label>
             <select name="output" id="output">
-              <option value="txt" selected>متن ساده — سریع‌ترین ⚡</option>
+              <option value="keeplayout" selected>متن + Word — پیشنهادی ⚡</option>
+              <option value="txt">فقط متن — کمی سریع‌تر</option>
               <option value="txtraw">متن خام — سریع</option>
-              <option value="keeplayout">Word با چیدمان — کندتر</option>
               <option value="txtrawjson">متن + مختصات (JSON) — کندترین</option>
             </select>
             <p class="muted" style="margin:6px 0 0;font-size:11px">
-              «مختصات» موقعیت هر کلمه را هم می‌فرستد و چند برابر کندتر است؛
-              برای فاکتور معمولی لازم نیست.
+              در هر حالت، متن خوانده‌شده در باکس همین صفحه می‌آید و قابل ویرایش و کپی است.
+              «مختصات» موقعیت هر کلمه را هم می‌فرستد و چند برابر کندتر است.
             </p>
           </div>
         </div>
@@ -557,8 +605,19 @@ if ($logged) {
         </p>
         <div id="result" style="display:none">
           <div class="kpi" id="kpi"></div>
-          <pre id="text"></pre>
+          <div class="textbar">
+            <span class="muted" id="textinfo" style="margin:0"></span>
+            <span class="sp"></span>
+            <button type="button" class="ghost" id="btn-copy">کپی متن</button>
+            <button type="button" class="ghost" id="btn-txt">دانلود متن (TXT)</button>
+            <button type="button" class="ghost" id="btn-doc">دانلود Word</button>
+            <button type="button" class="ghost danger" id="btn-del" style="display:none">حذف فایل‌ها</button>
+          </div>
+          <textarea id="text" spellcheck="false" placeholder="متن خوانده‌شده این‌جا می‌آید…"></textarea>
           <p class="muted" id="saved" style="display:none"></p>
+          <p class="muted" id="txthint" style="display:none">
+            متن را می‌توانید همین‌جا ویرایش کنید؛ برای بردن به اکسل/ورد، «کپی متن» را بزنید.
+          </p>
         </div>
         <div id="job-err" class="flash error" style="display:none;margin:12px 0 0"></div>
       </div>
@@ -629,6 +688,14 @@ if ($logged) {
   var kpi = document.getElementById("kpi");
   var savedEl = document.getElementById("saved");
   var errBox = document.getElementById("job-err");
+  var textBox = document.getElementById("text");
+  var textInfo = document.getElementById("textinfo");
+  var txtHint = document.getElementById("txthint");
+  var btnCopy = document.getElementById("btn-copy");
+  var btnTxt = document.getElementById("btn-txt");
+  var btnDoc = document.getElementById("btn-doc");
+  var btnDel = document.getElementById("btn-del");
+  var lastJob = null;
   var timer = null;
   var current = null;
   var polls = 0;
@@ -656,7 +723,13 @@ if ($logged) {
   function reset() {
     hideError();
     result.style.display = "none";
-    textEl.textContent = "";
+    textBox.value = "";
+    textInfo.textContent = "";
+    txtHint.style.display = "none";
+    btnTxt.style.display = "none";
+    btnDoc.style.display = "none";
+    btnDel.style.display = "none";
+    btnCopy.style.display = "none";
     kpi.innerHTML = "";
     savedEl.style.display = "none";
     bar.style.width = "0%";
@@ -676,17 +749,33 @@ if ($logged) {
     meta.textContent = bits.join(" · ");
 
     if (job.status === "done") {
+      lastJob = job;
       setState("آماده", "ok");
       barWrap.className = "progress";
       bar.style.width = "100%";
       result.style.display = "block";
-      textEl.textContent = job.text || "(خروجی متنی خالی است)";
+      // متن مستقیم داخل باکس می‌آید و قابل ویرایش/کپی است
+      textBox.value = job.text || "";
+      var tLen = (job.text || "").length;
+      var cLen = job.charcount && Math.abs(job.charcount - tLen) <= 2 ? job.charcount : tLen;
+      textInfo.textContent = tLen ? (cLen.toLocaleString("fa-IR") + " نویسه") : "";
       kpi.innerHTML = '<div>تعداد صفحه<b>' + (job.pages || 0) + "</b></div>"
         + '<div>روش<b>' + (job.method || "-") + "</b></div>"
-        + '<div>طول متن<b>' + ((job.text || "").length) + "</b></div>";
+        + '<div>طول متن<b>' + cLen + "</b></div>";
+      var hasText = !!(job.text && job.text.length);
+      btnCopy.style.display = hasText ? "inline-block" : "none";
+      btnTxt.style.display = job.txt_file ? "inline-block" : "none";
+      btnDoc.style.display = job.saved ? "inline-block" : "none";
+      btnDel.style.display = (job.saved || job.txt_file) ? "inline-block" : "none";
+      txtHint.style.display = hasText ? "block" : "none";
       if (job.saved) {
         savedEl.style.display = "block";
-        savedEl.innerHTML = 'فایل خروجی ذخیره شد: <b class="ltr">' + job.saved + "</b> — از پوشهٔ fk-uploads بردارید.";
+        savedEl.innerHTML = 'فایل Word هم ساخته شد (<b class="ltr">'
+          + (job.saved_bytes ? Math.max(1, Math.round(job.saved_bytes / 1024)) + " KB" : "—")
+          + "</b>) — با دکمهٔ «دانلود Word» بگیرید."
+          + (job.docx_rebuilt ? " <span class=\"muted\">(فایل سرویس سالم نبود؛ از همین متن دوباره ساخته شد تا در Word باز شود.)</span>" : "");
+      } else {
+        savedEl.style.display = "none";
       }
       stop.style.display = "none";
       go.disabled = false;
@@ -860,6 +949,52 @@ if ($logged) {
       go.disabled = false;
     };
     xhr.send(fd);
+  });
+
+  /* ── دکمه‌های متن: کپی، دانلود TXT، دانلود Word، حذف فایل ── */
+  function jobFileUrl(kind) {
+    if (!lastJob || !lastJob.id) { return ""; }
+    return "?api=file&f=" + kind + "&id=" + encodeURIComponent(lastJob.id);
+  }
+
+  btnCopy.addEventListener("click", function () {
+    var text = textBox.value || "";
+    if (!text) { return; }
+    var done = function () {
+      var old = btnCopy.textContent;
+      btnCopy.textContent = "کپی شد ✓";
+      setTimeout(function () { btnCopy.textContent = old; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { textBox.select(); document.execCommand("copy"); done(); });
+    } else {
+      textBox.focus(); textBox.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      done();
+    }
+  });
+
+  btnTxt.addEventListener("click", function () {
+    var url = jobFileUrl("txt");
+    if (url) { window.location.href = url; }
+  });
+
+  btnDoc.addEventListener("click", function () {
+    var url = jobFileUrl("doc");
+    if (url) { window.location.href = url; }
+  });
+
+  btnDel.addEventListener("click", function () {
+    if (!lastJob || !lastJob.id) { return; }
+    if (!window.confirm("فایل‌های ذخیره‌شده روی سرور حذف شوند؟ متن در همین صفحه می‌ماند.")) { return; }
+    fetch("?api=deletefiles&id=" + encodeURIComponent(lastJob.id), { cache: "no-store" })
+      .then(function () {
+        btnDoc.style.display = "none";
+        btnTxt.style.display = "none";
+        btnDel.style.display = "none";
+        savedEl.style.display = "none";
+      })
+      .catch(function () {});
   });
 
   stop.addEventListener("click", function () {

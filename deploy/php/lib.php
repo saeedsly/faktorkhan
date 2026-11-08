@@ -85,6 +85,14 @@ function h(?string $v): string
     return htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function mb_strlen_safe(?string $s): int
+{
+    if (function_exists('mb_strlen')) {
+        return mb_strlen((string) $s, 'UTF-8');
+    }
+    return strlen((string) $s);
+}
+
 function mb_substr_safe(?string $s, int $start, ?int $len = null): string
 {
     if (function_exists('mb_substr')) {
@@ -444,6 +452,485 @@ function download_output(string $url): array
     return array('ok' => true, 'body' => (string) $body, 'suffix' => $suffix, 'message' => '');
 }
 
+/* ═════════════ استخراج متن از فایل خروجی سرویس ابری ═════════════ */
+/*
+ * چرا لازم است؟
+ *   سرویس ابری خروجی را «فایل Word» می‌دهد (docx) و متن درون
+ *   word/document.xml قرار دارد. اگر همان فایل فقط ذخیره شود،
+ *   کاربر متنی نمی‌بیند. این توابع متن را از داخل فایل بیرون می‌کشند
+ *   تا مستقیم در باکس صفحه نمایش داده شود.
+ *
+ * نکتهٔ سازگاری: روی ویندوز ۷ / هاست‌های قدیمی افزونهٔ ZipArchive
+ * معمولاً فعال نیست و zlib هم ممکن است نباشد؛ پس خواندن ZIP و
+ * بازکردن deflate این‌جا دستی پیاده شده است.
+ */
+
+/** ساخت جدول هافمن استاندارد (RFC 1951) */
+function fk_huff_build(array $lens): array
+{
+    $count = array_fill(0, 16, 0);
+    foreach ($lens as $l) {
+        $count[(int) $l]++;
+    }
+    $count[0] = 0;
+    $offs = array_fill(0, 16, 0);
+    for ($i = 1; $i < 16; $i++) {
+        $offs[$i] = $offs[$i - 1] + $count[$i - 1];
+    }
+    $symbols = array();
+    foreach ($lens as $sym => $l) {
+        if ((int) $l > 0) {
+            $symbols[$offs[(int) $l]++] = (int) $sym;
+        }
+    }
+    return array('count' => $count, 'symbols' => $symbols);
+}
+
+/** جدول‌های ثابت بلاک نوع ۱ */
+function fk_fixed_tables(): array
+{
+    static $t = null;
+    if ($t === null) {
+        $lit = array_merge(array_fill(0, 144, 8), array_fill(0, 112, 9),
+            array_fill(0, 24, 7), array_fill(0, 8, 8));
+        $t = array('lit' => fk_huff_build($lit), 'dist' => fk_huff_build(array_fill(0, 30, 5)));
+    }
+    return $t;
+}
+
+/**
+ * باز کردن deflate خام (RFC 1951) بدون zlib.
+ * در صورت هر خطا رشتهٔ خالی برمی‌گرداند (هیچ‌وقت استثنا بیرون نمی‌دهد).
+ */
+function fk_inflate_raw(string $d): string
+{
+    if (function_exists('gzinflate')) {
+        $out = @gzinflate($d);
+        if ($out !== false) {
+            return $out;
+        }
+    }
+    $n = strlen($d);
+    $pos = 0;
+    $bitBuf = 0;
+    $bitCnt = 0;
+    $out = '';
+
+    $bits = static function (int $need) use (&$pos, &$bitBuf, &$bitCnt, $d, $n): int {
+        while ($bitCnt < $need) {
+            if ($pos >= $n) {
+                throw new Exception('inflate eof');
+            }
+            $bitBuf |= ord($d[$pos++]) << $bitCnt;
+            $bitCnt += 8;
+        }
+        $v = $bitBuf & ((1 << $need) - 1);
+        $bitBuf = $bitBuf >> $need;
+        $bitCnt -= $need;
+        return $v;
+    };
+
+    $decode = static function (array $h) use ($bits): int {
+        $code = 0;
+        $first = 0;
+        $index = 0;
+        for ($len = 1; $len <= 15; $len++) {
+            $code |= $bits(1);
+            $cnt = $h['count'][$len];
+            if (($code - $first) < $cnt) {
+                return (int) $h['symbols'][$index + ($code - $first)];
+            }
+            $index += $cnt;
+            $first = ($first + $cnt) << 1;
+            $code = $code << 1;
+        }
+        throw new Exception('inflate code');
+    };
+
+    $lenBase = array(3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43,
+        51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258);
+    $lenExt = array(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4,
+        4, 4, 5, 5, 5, 5, 0);
+    $distBase = array(1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257,
+        385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577);
+    $distExt = array(0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9,
+        10, 10, 11, 11, 12, 12, 13, 13);
+    $order = array(16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+
+    try {
+        $final = 0;
+        while ($final === 0) {
+            $final = $bits(1);
+            $type = $bits(2);
+
+            if ($type === 0) {
+                /* بلاک ذخیره‌شده: به مرز بایت برگرد */
+                $bitBuf = 0;
+                $bitCnt = 0;
+                if ($pos + 4 > $n) {
+                    throw new Exception('inflate stored');
+                }
+                $h = unpack('vlen/vnlen', substr($d, $pos, 4));
+                $len = (int) $h['len'];
+                $pos += 4;
+                if ($pos + $len > $n) {
+                    throw new Exception('inflate stored len');
+                }
+                $out .= substr($d, $pos, $len);
+                $pos += $len;
+                continue;
+            }
+            if ($type === 3) {
+                throw new Exception('inflate type');
+            }
+
+            if ($type === 1) {
+                $t = fk_fixed_tables();
+                $lh = $t['lit'];
+                $dh = $t['dist'];
+            } else {
+                $hlit = $bits(5) + 257;
+                $hdist = $bits(5) + 1;
+                $hclen = $bits(4) + 4;
+                $clens = array_fill(0, 19, 0);
+                for ($i = 0; $i < $hclen; $i++) {
+                    $clens[$order[$i]] = $bits(3);
+                }
+                $clh = fk_huff_build($clens);
+                $lens = array();
+                while (count($lens) < $hlit + $hdist) {
+                    $sym = $decode($clh);
+                    if ($sym < 16) {
+                        $lens[] = $sym;
+                    } elseif ($sym === 16) {
+                        $rep = 3 + $bits(2);
+                        $prev = empty($lens) ? 0 : (int) $lens[count($lens) - 1];
+                        for ($k = 0; $k < $rep; $k++) {
+                            $lens[] = $prev;
+                        }
+                    } elseif ($sym === 17) {
+                        $rep = 3 + $bits(3);
+                        for ($k = 0; $k < $rep; $k++) {
+                            $lens[] = 0;
+                        }
+                    } else {
+                        $rep = 11 + $bits(7);
+                        for ($k = 0; $k < $rep; $k++) {
+                            $lens[] = 0;
+                        }
+                    }
+                }
+                $lh = fk_huff_build(array_slice($lens, 0, $hlit));
+                $dh = fk_huff_build(array_slice($lens, $hlit, $hdist));
+            }
+
+            while (true) {
+                $sym = $decode($lh);
+                if ($sym < 256) {
+                    $out .= chr($sym);
+                    continue;
+                }
+                if ($sym === 256) {
+                    break;
+                }
+                $i = $sym - 257;
+                if ($i < 0 || $i > 28) {
+                    throw new Exception('inflate len');
+                }
+                $len = $lenBase[$i] + $bits($lenExt[$i]);
+                $ds = $decode($dh);
+                if ($ds > 29) {
+                    throw new Exception('inflate dist');
+                }
+                $dist = $distBase[$ds] + $bits($distExt[$ds]);
+                $have = strlen($out);
+                $start = $have - $dist;
+                if ($start < 0) {
+                    throw new Exception('inflate backref');
+                }
+                if ($dist >= $len) {
+                    $out .= substr($out, $start, $len);
+                } else {
+                    for ($k = 0; $k < $len; $k++) {
+                        $out .= $out[$start + $k];
+                    }
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        return '';
+    }
+    return $out;
+}
+
+/**
+ * خواندن یک عضو از فایل ZIP از راه «فهرست مرکزی»
+ * (ZIP محلی ممکن است اندازهٔ فشرده را صفر بگذارد؛ فهرست مرکزی همیشه درست است).
+ */
+function fk_zip_entry(string $zip, string $want): string
+{
+    $zipLen = strlen($zip);
+    if ($zipLen < 30) {
+        return '';
+    }
+    $tail = substr($zip, max(0, $zipLen - 66000));
+    $eocd = strrpos($tail, "PK\x05\x06");
+    if ($eocd === false) {
+        return '';
+    }
+    $e = unpack('vdisk/vcddisk/vcntdisk/vcount/Vcdsize/Vcdoff/vclen', substr($tail, $eocd + 4, 18));
+    if (!is_array($e) || !isset($e['count'], $e['cdoff'])) {
+        return '';
+    }
+    /* نام کلیدهای unpack با حرف بزرگ، پیش‌شمارهٔ عددی می‌گیرد؛ پس عددی می‌خوانیم */
+    $count = min((int) $e['count'], 4000);
+    $off = (int) $e['cdoff'];
+    for ($i = 0; $i < $count; $i++) {
+        if ($off < 0 || $off + 46 > $zipLen || substr($zip, $off, 4) !== "PK\x01\x02") {
+            break;
+        }
+        $h = unpack(
+            'vvermade/vverneed/vflag/vmethod/vtime/vdate/Vcrc/Vcsize/Vsize'
+            . '/vnlen/vxlen/vclen/vdisk/viattr/Veattr/Vloff',
+            substr($zip, $off + 4, 42)
+        );
+        if (!is_array($h) || !isset($h['nlen'], $h['csize'], $h['loff'])) {
+            break;
+        }
+        /* همان نکته: کلیدهای V* به‌صورت عددی ذخیره می‌شوند */
+        $name = substr($zip, $off + 46, (int) $h['nlen']);
+        $off += 46 + (int) $h['nlen'] + (int) $h['xlen'] + (int) $h['clen'];
+        if (strcasecmp($name, ltrim($want, '/')) !== 0) {
+            continue;
+        }
+        $lo = (int) $h['loff'];
+        if ($lo < 0 || $lo + 30 > $zipLen || substr($zip, $lo, 4) !== "PK\x03\x04") {
+            return '';
+        }
+        $lh = unpack('vnlen/vxlen', substr($zip, $lo + 26, 4));
+        if (!is_array($lh)) {
+            return '';
+        }
+        $data = $lo + 30 + (int) $lh['nlen'] + (int) $lh['xlen'];
+        $csize = (int) $h['csize'];
+        if ($csize <= 0) {
+            $csize = max(0, min($zipLen - $data, (int) $h['size'] + 4096));
+        }
+        $raw = substr($zip, $data, $csize);
+        if ((int) $h['method'] === 0) {
+            return $raw;
+        }
+        if ((int) $h['method'] === 8) {
+            return fk_inflate_raw($raw);
+        }
+        return '';
+    }
+    return '';
+}
+
+/** متن را از XML فایل Word بیرون می‌کشد (پاراگراف‌ها با خط جدید) */
+function fk_docx_text(string $xml): string
+{
+    if ($xml === '') {
+        return '';
+    }
+    $xml = str_replace(array("\r\n", "\r"), "\n", $xml);
+    /* مرزهای ساختاری را به نویسه‌های ساده تبدیل کن */
+    $xml = preg_replace('#<w:tab[^>]*/>#', "\t", $xml);
+    $xml = preg_replace('#<w:(br|cr)[^>]*/>#', "\n", $xml);
+    $xml = preg_replace('#</w:p>#', "\n", $xml);
+    $xml = preg_replace('#</w:tc>#', "\t", $xml);
+    $xml = preg_replace('#</w:tr>#', "\n", $xml);
+    /* متن‌های واقعی */
+    $xml = preg_replace('#<w:t(?:\s[^>]*)?>#', '', $xml);
+    $xml = preg_replace('#<[^>]{1,4000}>#', '', $xml);
+    $text = html_entity_decode($xml, ENT_QUOTES | ENT_XML1, 'UTF-8');
+    $text = str_replace(array("\xEF\xBF\xBD"), '', (string) $text);
+    $text = str_replace("\xc2\xa0", ' ', (string) $text);
+    /* سطرهای خالی حاصل از XML را حذف کن: هر پاراگراف = یک خط */
+    $lines = array();
+    foreach (explode("\n", (string) $text) as $line) {
+        $line = rtrim($line);
+        if (trim($line) === '') {
+            continue;
+        }
+        $lines[] = $line;
+    }
+    return trim(implode("\n", $lines));
+}
+
+/** تبدیل HTML/RTF/متنی که بعضی سرویس‌ها به‌جای فایل می‌فرستند به متن ساده */
+function fk_html_to_text(string $html): string
+{
+    $html = preg_replace('#<(script|style)[^>]*>.*?</\1>#is', '', $html);
+    $html = preg_replace('#<br\s*/?>#i', "\n", (string) $html);
+    $html = preg_replace('#</(p|div|tr|li|h[1-6])>#i', "\n", (string) $html);
+    $html = preg_replace('#</t[dh]>#i', "\t", (string) $html);
+    $text = strip_tags((string) $html);
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = str_replace("\xc2\xa0", ' ', $text);
+    $text = preg_replace('/[ \t]+(\r?\n)/', '$1', $text);
+    $text = preg_replace('/(\r?\n){3,}/', "\n\n", $text);
+    return trim((string) $text);
+}
+
+/**
+ * از بدنهٔ فایل دانلودشده تا جایی که می‌شود متن بیرون بکش.
+ * @return array{text:string,kind:string,ok:bool}
+ *   kind: docx | text | empty | binary
+ */
+function fk_body_text(string $body, string $suffix): array
+{
+    $len = strlen($body);
+    if ($len === 0) {
+        return array('text' => '', 'kind' => 'empty', 'ok' => false);
+    }
+
+    /* ۱) فایل Word/Odt (.docx/.odt/…) → از داخل بستهٔ ZIP بخوان */
+    if (substr($body, 0, 2) === "PK") {
+        foreach (array('word/document.xml', 'content.xml', 'word/document2.xml') as $entry) {
+            $xml = fk_zip_entry($body, $entry);
+            if ($xml !== '') {
+                $t = fk_docx_text($xml);
+                if ($t !== '') {
+                    return array('text' => $t, 'kind' => 'docx', 'ok' => true);
+                }
+            }
+        }
+        /* ZIP باز شد ولی متن نداشت — شاید سند واقعاً خالی است */
+        return array('text' => '', 'kind' => 'empty', 'ok' => false);
+    }
+
+    /* ۲) قالب‌های متنی */
+    $head = strtolower(substr($body, 0, 600));
+    $looksHtml = in_array($suffix, array('html', 'htm', 'xhtml'), true)
+        || stripos($head, '<!doctype') !== false
+        || stripos($head, '<html') !== false
+        || (strpos($head, '<w:') !== false);
+    $isText = $looksHtml
+        || in_array($suffix, array('txt', 'json', 'csv', 'xml', 'rtf'), true)
+        || !preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', $body);
+
+    if (!$isText) {
+        return array('text' => '', 'kind' => 'binary', 'ok' => false);
+    }
+
+    $text = str_replace(array("\r\n", "\r"), "\n", $body);
+    if (strpos($text, "\xEF\xBB\xBF") === 0) {
+        $text = substr($text, 3);
+    }
+    if ($looksHtml || strpos($text, '<') !== false && preg_match('#</?[a-z][a-z0-9]*[\s>/]#i', $text)) {
+        $text = fk_html_to_text($text);
+    } elseif (stripos(substr($text, 0, 20), '{\rtf') !== false) {
+        $text = preg_replace('/\\\\[a-z]+-?\d* ?/i', ' ', $text);
+        $text = str_replace(array('{', '}', '\n', '\r'), array('', '', "\n", "\n"), (string) $text);
+        $text = trim((string) preg_replace('/[ \t]{2,}/', ' ', (string) $text));
+    } else {
+        $text = trim($text);
+    }
+
+    /* گاهی بدنه خودش یک JSON است ({…}) — متن داخلش را بیرون بکش */
+    if ($text !== '' && ($text[0] === '{' || $text[0] === '[')) {
+        $j = json_decode($text, true);
+        if (is_array($j)) {
+            $inner = pick_key($j, array('Output', 'Text', 'Result', 'text', 'output'));
+            if ($inner !== '' && $inner !== $text) {
+                $dec = base64_decode($inner, true);
+                $text = ($dec !== false && $dec !== '' && !preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', $dec))
+                    ? $dec : $inner;
+            }
+        }
+    }
+
+    $text = trim((string) preg_replace('/\n{3,}/', "\n\n", (string) $text));
+    if ($text === '') {
+        return array('text' => '', 'kind' => 'empty', 'ok' => false);
+    }
+    return array('text' => $text, 'kind' => 'text', 'ok' => true);
+}
+
+/**
+ * ساخت یک فایل Word سالم و کمینه از متن (بدون zlib، بدون ZipArchive).
+ * چرا؟ بعضی وقت‌ها فایلی که سرویس ابری می‌فرستد در Word باز نمی‌شود
+ * («فایل خراب است»). متن که سالم استخراج شده، پس خودمان یک .docx
+ * استاندارد می‌سازیم تا کاربر همیشه فایلی داشته باشد که باز می‌شود.
+ */
+function fk_zip_store(array $files): string
+{
+    $out = '';
+    $central = '';
+    $count = 0;
+    foreach ($files as $name => $data) {
+        $name = (string) $name;
+        $data = (string) $data;
+        $crc = crc32($data);
+        $len = strlen($data);
+        $offset = strlen($out);
+        $common = pack('vvvvvVVVvv', 20, 0, 0, 0, 0, $crc, $len, $len,
+            strlen($name), 0);
+        $out .= "PK\x03\x04" . $common . $name . $data;
+        $central .= "PK\x01\x02" . pack('vvvvvvVVVvvvvvVV',
+            20, 20, 0, 0, 0, 0, $crc, $len, $len,
+            strlen($name), 0, 0, 0, 0, 32, $offset) . $name;
+        $count++;
+    }
+    $cd = strlen($central);
+    $eocd = pack('vvvvVVv', 0, 0, $count, $count, $cd, strlen($out), 0);
+    return $out . $central . "PK\x05\x06" . $eocd;
+}
+
+/** متن را به XML فایل Word تبدیل و بستهٔ .docx می‌سازد */
+function fk_docx_build(string $text): string
+{
+    $text = str_replace(array("\r\n", "\r"), "\n", $text);
+    $paras = '';
+    foreach (explode("\n", $text) as $line) {
+        $line = (string) preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $line);
+        $run = '<w:r><w:t xml:space="preserve">'
+            . htmlspecialchars($line, ENT_QUOTES | ENT_XML1, 'UTF-8')
+            . '</w:t></w:r>';
+        $paras .= '<w:p>' . ($line === '' ? '' : $run) . '</w:p>';
+    }
+    $doc = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        . '<w:body>' . $paras
+        . '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+        . '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
+        . '</w:body></w:document>';
+    $types = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        . '<Default Extension="xml" ContentType="application/xml"/>'
+        . '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        . '</Types>';
+    $rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        . '</Relationships>';
+    return fk_zip_store(array(
+        '[Content_Types].xml' => $types,
+        '_rels/.rels' => $rels,
+        'word/document.xml' => $doc,
+    ));
+}
+
+/** آیا این بدنه یک بستهٔ Word قابل خواندن است؟ */
+function fk_is_valid_docx(string $body): bool
+{
+    return substr($body, 0, 2) === 'PK' && fk_zip_entry($body, 'word/document.xml') !== '';
+}
+
+/** ذخیرهٔ نسخهٔ متنی در کنار فایل اصلی (برای دانلود TXT) */
+function save_text_file(string $text): string
+{
+    if ($text === '') {
+        return '';
+    }
+    @mkdir(FK_UPLOADS, 0700, true);
+    $name = 'fk-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.txt';
+    return @file_put_contents(FK_UPLOADS . '/' . $name, "\xEF\xBB\xBF" . $text) === false ? '' : $name;
+}
+
 /* ═══════════════════════ کارها (jobs) ═══════════════════════ */
 
 function jobs_dir(): string
@@ -503,6 +990,11 @@ function job_create(array $data): array
         'updated_at' => time(),
         'download' => '',
         'saved' => '',
+        'saved_bytes' => 0,
+        'txt_file' => '',
+        'charcount' => 0,
+        'out_kind' => '',
+        'docx_rebuilt' => false,
         'error' => '',
     ), $data);
     job_save($job);
@@ -529,6 +1021,64 @@ function job_gc(): void
     foreach (@glob(FK_UPLOADS . '/*.tmp') ?: array() as $f) {
         @unlink($f);
     }
+}
+
+/**
+ * پاک‌کردن فایل‌های دانلودی قدیمی (فقط با درخواست خود کاربر، نه خودکار).
+ * متن برای همیشه در کار می‌ماند؛ پس حذف فایل هیچ اطلاعاتی را از بین نمی‌برد.
+ */
+function job_delete_files(array $job): array
+{
+    foreach (array('saved', 'txt_file') as $k) {
+        $n = (string) ($job[$k] ?? '');
+        if ($n !== '' && preg_match('/^[A-Za-z0-9._-]+$/', $n)) {
+            $p = FK_UPLOADS . '/' . $n;
+            if (is_file($p)) {
+                @unlink($p);
+            }
+        }
+        $job[$k] = '';
+    }
+    job_save($job);
+    return $job;
+}
+
+/** خروجی دادن یک فایل از پوشهٔ آپلود (با کنترل مالکیت کار) */
+function send_upload_file(string $name, string $downloadAs): void
+{
+    $name = (string) preg_replace('/[^A-Za-z0-9._-]/', '', $name);
+    $path = FK_UPLOADS . '/' . $name;
+    if ($name === '' || !is_file($path)) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'فایل پیدا نشد.';
+        exit;
+    }
+    $ext = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+    $types = array(
+        'txt' => 'text/plain; charset=utf-8', 'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'doc' => 'application/msword', 'pdf' => 'application/pdf', 'json' => 'application/json; charset=utf-8',
+        'html' => 'text/html; charset=utf-8', 'htm' => 'text/html; charset=utf-8',
+        'csv' => 'text/csv; charset=utf-8', 'xml' => 'application/xml; charset=utf-8',
+        'rtf' => 'application/rtf', 'zip' => 'application/zip',
+    );
+    $type = $types[$ext] ?? 'application/octet-stream';
+    clearstatcache(true, $path);
+    $bytes = (int) @filesize($path);
+    $safeAs = (string) preg_replace('/[^\p{L}\p{N}._-]+/u', '-', $downloadAs);
+    $safeAs = trim($safeAs, '-_.');
+    if ($safeAs === '') {
+        $safeAs = $name;
+    }
+    $safeAs .= '.' . ($ext !== '' ? $ext : 'bin');
+    header('Content-Type: ' . $type);
+    header('Content-Length: ' . $bytes);
+    header('Content-Disposition: attachment; filename="' . $safeAs . '"; '
+        . "filename*=UTF-8''" . rawurlencode($safeAs));
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: private, no-store, max-age=0');
+    @readfile($path);
+    exit;
 }
 
 /**
@@ -947,20 +1497,61 @@ function job_tick(array $job, int $budget = 25): array
             job_save($job);
             return $job;
         }
-        if (in_array($dl['suffix'], array('txt', 'json', 'csv', 'xml', 'html', 'htm'), true)) {
-            return job_finish_text($job, $dl['body']);
+        /*
+         * مهم: کاربر «متن» می‌خواهد، نه فایل.
+         * سرویس خروجی را در فایل Word می‌دهد؛ متن را از داخل همان فایل
+         * بیرون می‌کشیم و مستقیم در باکس صفحه نشان می‌دهیم.
+         * فایل اصلی هم (اگر سالم بود) برای دانلود نگه داشته می‌شود.
+         */
+        $parsed = fk_body_text($dl['body'], $dl['suffix']);
+        $job['out_kind'] = $parsed['kind'];
+
+        if ($parsed['ok']) {
+            /*
+             * پسوند فایل ذخیره‌شده باید با محتوای واقعی بخواند.
+             * اگر سرویس به‌جای Word یک صفحهٔ HTML/متن بفرستد و ما آن را
+             * با پسوند .docx ذخیره کنیم، Word می‌گوید «فایل خراب است».
+             */
+            $extOut = preg_replace('/[^a-z0-9]/', '', $dl['suffix'] ?: '');
+            $isZip = substr($dl['body'], 0, 2) === 'PK';
+            $body = $dl['body'];
+
+            if (in_array($extOut, array('docx', 'doc', 'odt', 'zip'), true) || $isZip) {
+                if (fk_is_valid_docx($body)) {
+                    $extOut = 'docx';          // خودِ فایل سرویس سالم است → همان را بده
+                } else {
+                    /* فایل سرویس در Word باز نمی‌شود → از متنِ خوانده‌شده یک Word سالم بساز */
+                    $body = fk_docx_build($parsed['text']);
+                    $extOut = 'docx';
+                    $job['docx_rebuilt'] = true;
+                }
+            } elseif ($extOut === '') {
+                $extOut = 'txt';
+            }
+
+            $safe = 'fk-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.' . $extOut;
+            @mkdir(FK_UPLOADS, 0700, true);
+            if (@file_put_contents(FK_UPLOADS . '/' . $safe, $body) !== false) {
+                $job['saved'] = $safe;
+                $job['saved_bytes'] = strlen($body);
+            }
+            $job['txt_file'] = save_text_file($parsed['text']);
+            /* شمارش نویسه فقط وقتی mbstring هست معتبر است؛ وگرنه مرورگر خودش می‌شمارد */
+            $job['charcount'] = function_exists('mb_strlen') ? mb_strlen($parsed['text'], 'UTF-8') : 0;
+            return job_finish_text($job, $parsed['text']);
         }
-        $extOut = preg_replace('/[^a-z0-9]/', '', $dl['suffix'] ?: 'docx');
-        $safe = 'fk-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.' . $extOut;
-        @mkdir(FK_UPLOADS, 0700, true);
-        if (@file_put_contents(FK_UPLOADS . '/' . $safe, $dl['body']) === false) {
-            $job['status'] = 'failed';
-            $job['message'] = 'ذخیرهٔ فایل خروجی روی سرور ممکن نشد (دسترسی پوشهٔ fk-uploads).';
-            job_save($job);
-            return $job;
-        }
-        $job['saved'] = $safe;
-        return job_finish_text($job, '');
+
+        /* فایل خالی یا ناخوانا آمد → فایل بی‌مصرف روی هاست ذخیره نکن */
+        $job['status'] = 'failed';
+        $job['stage'] = 'download';
+        $job['error'] = 'EmptyOutput';
+        $job['message'] = $parsed['kind'] === 'binary'
+            ? 'سرویس ابری فایلی فرستاد که خواندنش ممکن نشد. یک بار دیگر امتحان کنید.'
+            : 'سرویس ابری برای این تصویر هیچ متنی پیدا نکرد (فایل خالی بود). '
+              . 'عکس را واضح‌تر و روشن‌تر بگیرید — کل تصویر داخل کادر و بدون تاری باشد — '
+              . 'و دوباره بفرستید. اگر تکرار شد، diag.php را ببینید.';
+        job_save($job);
+        return $job;
     }
 
     /* مرحلهٔ ناشناخته → از صفر تلاش کن */
