@@ -140,10 +140,31 @@ if ($api !== '') {
             json_out(array('ok' => false, 'message' => 'این قالب پشتیبانی نمی‌شود: ' . h($ext)), 400);
         }
 
-        $sendName = preg_replace('/[^\w.\-]/u', '_', basename($origName)) ?: ('document.' . $ext);
-        $mime = (string) ($file['type'] ?? '');
-        if ($mime === '' || $mime === 'application/octet-stream') {
+        /*
+         * نام فایل که به سرویس ابری می‌رود:
+         *   • باید پسوند درست داشته باشد (سرویس از همین پسوند نوع فایل را می‌فهمد)
+         *   • نباید نام موقت PHP (phpXXXX.tmp) یا کاراکتر عجیب داشته باشد
+         *   • آزمون واقعی: نام درست → موفق، نام temp → خطای ۵۰۰ سرویس
+         */
+        $base = pathinfo(basename($origName), PATHINFO_FILENAME);
+        $base = preg_replace('/[^\w\-]/u', '-', (string) $base);
+        $base = trim(preg_replace('/-+/', '-', (string) $base), '-_.');
+        if ($base === '' || strlen($base) > 60) {
+            $base = 'invoice';
+        }
+        $base = mb_substr_safe($base, 0, 60);
+        $sendName = $base . '.' . $ext;
+
+        /* MIME: اگر مرورگر مقدار مبهم داد، از پسوند حدس بزن.
+           اگر هم پسوند ناشناخته بود، خالی می‌ماند تا سرویس خودش تشخیص دهد
+           (فرستادن application/octet-stream باعث خطای ۵۰۰ سرویس می‌شود). */
+        $mimeParts = explode(';', (string) ($file['type'] ?? ''));
+        $mime = strtolower(trim((string) ($mimeParts[0] ?? '')));
+        if ($mime === '' || $mime === 'application/octet-stream' || $mime === 'application/unknown') {
             $mime = mime_for_ext($ext);
+            if ($mime === 'application/octet-stream') {
+                $mime = '';   // نامشخص → اصلاً نفرست
+            }
         }
 
         $method = max(1, min(4, (int) ($_POST['method'] ?? 4)));
@@ -486,11 +507,15 @@ if ($logged) {
           <div>
             <label>روش تبدیل</label>
             <select name="method" id="method">
-              <option value="4" selected>۴ — استخراج متن (پیشنهادی برای عکس/دست‌نویس)</option>
-              <option value="1">۱ — Word</option>
-              <option value="2">۲ — Word با حفظ ساختار</option>
-              <option value="3">۳ — Word (حالت سوم)</option>
+              <option value="4" selected>استخراج متن — سریع‌ترین و مناسب فاکتور</option>
+              <option value="1">Word (فقط PDF متنی — کندتر)</option>
+              <option value="2">Word با حفظ ساختار (فقط PDF)</option>
+              <option value="3">Word — حالت سوم (فقط PDF)</option>
             </select>
+            <p class="muted" style="margin:6px 0 0;font-size:11px">
+              برای عکس و فاکتور دست‌نویس، سرویس ابری فقط «استخراج متن» را می‌پذیرد؛
+              اگر گزینهٔ دیگری انتخاب شود، برنامه خودکار همان را می‌فرستد.
+            </p>
           </div>
           <div>
             <label>قالب خروجی</label>

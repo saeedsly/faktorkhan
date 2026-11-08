@@ -223,10 +223,22 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
             $payload['filename'] = $safeName;
             $payload['filemime'] = $fileMime ?: 'application/octet-stream';
         } elseif (class_exists('CURLFile')) {
-            $payload['filehandle'] = new CURLFile($filePath, $fileMime ?: 'application/octet-stream', $safeName);
+            /*
+             * نکتهٔ آزمون واقعی سرویس:
+             *   نام/پسوند واقعی + MIME درست  → موفق
+             *   نام temp (phpdiag2793.tmp) + application/octet-stream → خطای ۵۰۰ سرویس
+             *   نام واقعی + بدون MIME        → موفق
+             * پس MIME نامشخص را «حذف» می‌کنیم، نه اینکه octet-stream بفرستیم.
+             */
+            if ($fileMime !== '' && $fileMime !== 'application/octet-stream') {
+                $payload['filehandle'] = new CURLFile($filePath, $fileMime, $safeName);
+            } else {
+                // سازندهٔ دوپارامتری: cURL نوع را خودش حدس می‌زند
+                $payload['filehandle'] = new CURLFile($filePath, '', $safeName);
+            }
         } else {
             $payload['filehandle'] = '@' . $filePath . ';filename=' . $safeName
-                . ';type=' . ($fileMime ?: 'application/octet-stream');
+                . ($fileMime !== '' && $fileMime !== 'application/octet-stream' ? ';type=' . $fileMime : '');
         }
     }
 
@@ -275,9 +287,17 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
     curl_close($ch);
 
     if ($body === false) {
-        $msg = $errno === 28
-            ? 'سرویس ابری در زمان مقرر پاسخ نداد (فایل بزرگ یا اینترنت کند).'
-            : 'ارتباط با سرویس ابری برقرار نشد: ' . scrub($err, $token);
+        if ($errno === 28) {
+            $msg = 'سرویس ابری در زمان مقرر پاسخ نداد (فایل بزرگ یا اینترنت کند).';
+        } elseif ($errno === 60 || $errno === 51 || stripos($err, 'certificate') !== false) {
+            /* خطای گواهی TLS — به‌جای خاموش‌کردن امنیت، راه درست را بگو */
+            $msg = 'گواهی امنیتی سرویس ابری تأیید نشد (کد ' . $errno . '). '
+                . 'ساعت ویندوز را درست کنید؛ اگر حل نشد، در php.ini مسیر curl.cainfo را '
+                . 'به فایل cacert.pem معتبر بدهید. '
+                . '(خاموش‌کردن بررسی گواهی توصیه نمی‌شود چون رمز و توکن روی شبکه لو می‌رود.)';
+        } else {
+            $msg = 'ارتباط با سرویس ابری برقرار نشد: ' . scrub($err, $token);
+        }
         return array('ok' => false, 'data' => array(), 'message' => $msg, 'code' => 'Network');
     }
     $data = json_decode((string) $body, true);

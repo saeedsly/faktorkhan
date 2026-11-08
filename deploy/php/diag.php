@@ -280,6 +280,61 @@ if ($run && $token !== '' && $url !== '') {
       </div>
     <?php endforeach; ?>
 
+    <?php
+    /* ── خلاصهٔ خودکار: کاربر لازم نیست جدول‌ها را تفسیر کند ── */
+    $sum = array();
+    $credit = $results['credit'] ?? null;
+    if ($credit && $credit['json_ok']) {
+        $cj = json_decode((string) ($credit['json_scrubbed'] ?? '{}'), true);
+        $sum[] = array('ok', 'اتصال و اعتبار',
+            'برقرار است — اعتبار OCR: ' . number_format((int) ($cj['OCRCredit'] ?? 0)) . ' صفحه');
+    } else {
+        $sum[] = array('bad', 'اتصال و اعتبار', 'برقرار نشد — توکن یا اینترنت سرور را بررسی کنید.');
+    }
+    $real = $results['add_realname'] ?? null;
+    $realOk = $real && $real['json_ok'] && preg_match('/"FileToken"\s*:/i', (string) ($real['json_scrubbed'] ?? ''));
+    if ($realOk) {
+        $sum[] = array('ok', 'ارسال فایل (روش برنامه)',
+            'درست کار می‌کند — فایل با نام اصلی و MIME درست پذیرفته شد.');
+    } else {
+        $sum[] = array('bad', 'ارسال فایل (روش برنامه)',
+            'پذیرفته نشد — همین را برای پشتیبانی بفرستید.');
+    }
+    $tmp = $results['add_tempname'] ?? null;
+    if ($tmp && !preg_match('/"FileToken"\s*:/i', (string) ($tmp['json_scrubbed'] ?? ''))) {
+        $sum[] = array('ok', 'تشخیص علت',
+            'سرویس ابری نام فایل موقت (phpXXXX.tmp) را رد می‌کند. برنامه از نسخهٔ فعلی '
+            . 'نام اصلی فایل را می‌فرستد، پس این مورد مشکلی ایجاد نمی‌کند.');
+    }
+    $modes = '';
+    foreach (array('add_realname', 'add_nomime') as $k) {
+        $r2 = $results[$k] ?? null;
+        if ($r2 && preg_match('/"ConvertMethods"\s*:\s*"([^"]*)"/i', (string) ($r2['json_scrubbed'] ?? ''), $mm)) {
+            $modes = $mm[1];
+            break;
+        }
+    }
+    if ($modes !== '') {
+        $sum[] = array('ok', 'روش‌های مجاز برای این فایل', $modes
+            . ' — عکس و فاکتور دست‌نویس فقط «استخراج متن» را می‌پذیرد؛ برنامه خودکار همان را می‌فرستد.');
+    }
+    ?>
+    <div class="card" style="border-color:#3ecf8e55">
+      <h2>✅ خلاصه — این را بخوانید و تمام</h2>
+      <table>
+        <?php foreach ($sum as $row): ?>
+          <tr>
+            <td style="width:26%"><?= h($row[1]) ?></td>
+            <td class="<?= $row[0] === 'ok' ? 'ok' : 'bad' ?>">
+              <?= $row[0] === 'ok' ? '✓ ' : '✗ ' ?><span style="color:#eef1f7;font-weight:400"><?= h($row[2]) ?></span>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </table>
+      <p class="hint">اگر همهٔ موارد ✓ بودند، برنامه آماده است. کارت‌های زیر جزئیات فنی‌اند
+        (فقط اگر پشتیبانی خواست بفرستید).</p>
+    </div>
+
     <div class="card">
       <h2>نتیجه را برای پشتیبانی بفرستید</h2>
       <p class="hint">توکن در این صفحه پوشانده شده («TOKEN-HIDDEN»). می‌توانید کل این صفحه را
