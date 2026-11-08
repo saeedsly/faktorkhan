@@ -80,6 +80,7 @@ if ($api !== '') {
                 'charcount' => (int) ($job['charcount'] ?? 0),
                 'out_kind' => (string) ($job['out_kind'] ?? ''),
                 'docx_rebuilt' => !empty($job['docx_rebuilt']),
+                'engine' => (string) ($job['engine'] ?? 'cloud'),
                 'cleanup' => !empty($job['cleanup_pending']),
                 'real_progress' => !empty($job['real_progress']),
                 'slow' => !empty($job['slow']),
@@ -205,6 +206,14 @@ if ($api !== '') {
             }
         }
 
+        $engine = (string) ($_POST['engine'] ?? 'cloud');
+        if (!in_array($engine, array('cloud', 'ai'), true)) {
+            $engine = 'cloud';
+        }
+        /* اگر موتور هوش مصنوعی انتخاب شده ولی کلیدی نیست، به همان ابری برگرد */
+        if ($engine === 'ai' && trim((string) (load_config()['ai_key'] ?? '')) === '') {
+            $engine = 'cloud';
+        }
         $method = max(1, min(4, (int) ($_POST['method'] ?? 4)));
         $output = (string) ($_POST['output'] ?? 'keeplayout');
         if (!in_array($output, array('keeplayout', 'txt', 'txtraw', 'txtrawjson', 'jsoncoordinates', ''), true)) {
@@ -226,8 +235,18 @@ if ($api !== '') {
             'method' => $method,
             'output' => $output,
             'size' => (int) $file['size'],
+            'engine' => $engine,
         ));
         $job = job_queue($job, $stashed, $sendName, $mime, $method, $output, $deleteAfter);
+        if ($engine === 'ai') {
+            /* مستقیم به موتور هوش مصنوعی؛ سرویس ابری اصلاً صدا زده نمی‌شود */
+            $job['stage'] = 'ai';
+            $job['status'] = 'processing';
+            $job['progress'] = 85;
+            $job['message'] = 'آمادهٔ خوانش با موتور هوش مصنوعی…';
+            $job['keep_local'] = true;
+            job_save($job);
+        }
 
         /* شناسهٔ کار را در نشست نگه می‌داریم تا بعد از رفرش هم قابل بازیابی باشد */
         $ids = (array) ($_SESSION['jobs'] ?? array());
@@ -246,6 +265,7 @@ if ($api !== '') {
                 'pages' => (int) $job['pages'],
                 'method' => (int) $job['method'],
                 'name' => $job['name'],
+                'engine' => (string) ($job['engine'] ?? 'cloud'),
             ),
         ));
     }
@@ -329,6 +349,38 @@ if ($method === 'POST' && $action === 'save_token') {
     redirect();
 }
 
+if ($method === 'POST' && $action === 'save_ai_key') {
+    if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
+        flash('error', 'دسترسی غیرمجاز.');
+        redirect();
+    }
+    $aiKey = trim((string) ($_POST['ai_key'] ?? ''));
+    if (strlen($aiKey) < 10) {
+        flash('error', 'کلید معتبر نیست (حداقل ۱۰ کاراکتر).');
+        redirect();
+    }
+    $cfg = load_config();
+    $cfg['ai_key'] = $aiKey;
+    if (!save_config($cfg)) {
+        flash('error', 'ذخیرهٔ کلید ممکن نشد (دسترسی نوشتن).');
+        redirect();
+    }
+    flash('ok', 'کلید موتور هوش مصنوعی ذخیره شد. حالا در فرم پردازش می‌توانید انتخابش کنید.');
+    redirect();
+}
+
+if ($method === 'POST' && $action === 'clear_ai_key') {
+    if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
+        flash('error', 'دسترسی غیرمجاز.');
+        redirect();
+    }
+    $cfg = load_config();
+    unset($cfg['ai_key']);
+    save_config($cfg);
+    flash('ok', 'کلید موتور هوش مصنوعی حذف شد.');
+    redirect();
+}
+
 if ($method === 'POST' && $action === 'clear_token') {
     if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'دسترسی غیرمجاز.');
@@ -370,6 +422,8 @@ $flash = take_flash();
 $logged = is_logged_in();
 $cfg = load_config();
 $tokenSet = !empty($cfg['token']);
+$aiKeySet = trim((string) ($cfg['ai_key'] ?? '')) !== '';
+$aiKeyMasked = mask((string) ($cfg['ai_key'] ?? ''));
 $tokenMasked = mask((string) ($cfg['token'] ?? ''));
 $hasCurl = function_exists('curl_init');
 $phpOk = version_compare(PHP_VERSION, '7.4', '>=');
@@ -545,6 +599,36 @@ if ($logged) {
     </div>
 
     <div class="card">
+      <h2>🤖 موتور هوش مصنوعی (اختیاری)
+        <span class="pill <?= $aiKeySet ? 'ok' : 'wait' ?>"><?= $aiKeySet ? 'فعال' : 'خاموش' ?></span>
+      </h2>
+      <p class="muted" style="margin:0 0 10px">
+        موتور دوم برای فاکتور <b>دست‌نویس</b> و عکس‌های تار/کج که سرویس ابری ضعیف می‌خواند.
+        اگر خاموش بماند، همه‌چیز مثل قبل با سرویس ابری کار می‌کند.
+        کلید فقط روی همین سرور می‌ماند و هیچ‌وقت در صفحه دیده نمی‌شود.
+      </p>
+      <table>
+        <tr><td>وضعیت</td><td><?= $aiKeySet ? 'کلید ثبت شده' : 'بدون کلید' ?></td></tr>
+        <?php if ($aiKeySet): ?>
+          <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= h($aiKeyMasked) ?></td></tr>
+        <?php endif; ?>
+        <tr><td>روش کار</td><td>تصویر مستقیم به مدل بینایی داده می‌شود (<span class="ltr">Base64</span>)</td></tr>
+      </table>
+      <form method="post" autocomplete="off" style="margin-top:12px">
+        <input type="hidden" name="action" value="save_ai_key">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+        <label><?= $aiKeySet ? 'جایگزینی کلید' : 'کلید موتور هوش مصنوعی را بچسبانید' ?></label>
+        <input type="text" name="ai_key" dir="ltr" placeholder="کلید" required>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" type="submit">ذخیره کلید</button>
+          <?php if ($aiKeySet): ?>
+            <button class="danger" type="submit" name="action" value="clear_ai_key" formnovalidate>حذف کلید</button>
+          <?php endif; ?>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
       <h2>📄 پردازش فایل</h2>
       <form id="upload-form" autocomplete="off">
         <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
@@ -552,6 +636,20 @@ if ($logged) {
         <input type="file" name="document" id="doc" required
                accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
         <div class="row" style="margin-top:10px">
+          <div>
+            <label>موتور خوانش</label>
+            <select name="engine" id="engine">
+              <option value="cloud" selected>سرویس ابری — پیش‌فرض (چاپی و تایپی)</option>
+              <option value="ai"<?= $aiKeySet ? '' : ' disabled' ?>>موتور هوش مصنوعی — دست‌نویس و عکس سخت<?= $aiKeySet ? '' : ' (کلید ندارد)' ?></option>
+            </select>
+            <p class="muted" style="margin:6px 0 0;font-size:11px">
+              <?php if ($aiKeySet): ?>
+                اگر خروجی سرویس ابری خالی بود، خودکار موتور هوش مصنوعی هم امتحان می‌شود.
+              <?php else: ?>
+                برای فعال‌کردن موتور دوم، در کارت «موتور هوش مصنوعی» بالای صفحه یک کلید ثبت کنید.
+              <?php endif; ?>
+            </p>
+          </div>
           <div>
             <label>روش تبدیل</label>
             <select name="method" id="method">
@@ -759,8 +857,10 @@ if ($logged) {
       var tLen = (job.text || "").length;
       var cLen = job.charcount && Math.abs(job.charcount - tLen) <= 2 ? job.charcount : tLen;
       textInfo.textContent = tLen ? (cLen.toLocaleString("fa-IR") + " نویسه") : "";
+      var engLabel = job.engine === "ai" ? "هوش مصنوعی" : "سرویس ابری";
       kpi.innerHTML = '<div>تعداد صفحه<b>' + (job.pages || 0) + "</b></div>"
         + '<div>روش<b>' + (job.method || "-") + "</b></div>"
+        + '<div>موتور<b>' + engLabel + "</b></div>"
         + '<div>طول متن<b>' + cLen + "</b></div>";
       var hasText = !!(job.text && job.text.length);
       btnCopy.style.display = hasText ? "inline-block" : "none";
@@ -899,6 +999,8 @@ if ($logged) {
     fd.append("csrf", form.querySelector('[name="csrf"]').value);
     fd.append("document", fileInput.files[0]);
     fd.append("method", document.getElementById("method").value);
+    var engEl = document.getElementById("engine");
+    fd.append("engine", engEl ? engEl.value : "cloud");
     fd.append("output", document.getElementById("output").value);
     if (form.querySelector('[name="delete_after"]').checked) { fd.append("delete_after", "1"); }
 
