@@ -50,7 +50,7 @@ if not defined PIPOK if exist "wheels\" (
 REM ۳-ب: نصب آنلاین با چند منبع (اگر اینترنت در دسترس باشد)
 if not defined PIPOK (
     echo [۳/۴] نصب کتابخانه‌ها از اینترنت  ^(یک‌بار^) ...
-    venv\Scripts\python.exe -m pip install --upgrade "pip<26" --timeout 45 --retries 1 --disable-pip-version-check > install-log.txt 2>&1
+    echo. > install-log.txt
     for %%M in ("https://pypi.org/simple" "https://mirror-pypi.runflare.com/simple" "https://pypi.tuna.tsinghua.edu.cn/simple" "https://mirrors.aliyun.com/pypi/simple" "https://mirrors.cloud.tencent.com/pypi/simple") do (
         if not defined PIPOK (
             echo       تلاش با %%M ...
