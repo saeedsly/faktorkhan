@@ -304,6 +304,7 @@ faktorkhan/
 | فایل | موضوع |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | معماری، مدل داده، جریان درخواست، تصمیم‌های فنی |
+| [docs/STACK-FA.md](docs/STACK-FA.md) | **این برنامه از چه فناوری‌هایی ساخته شده؟** (PHP، پایتون، کتابخانه‌ها، چرا) |
 | [docs/INSTALL-FA.md](docs/INSTALL-FA.md) | **راهنمای ساده و مرحله‌بندی‌شده نصب (از صفر)** |
 | [docs/DEPLOY-WINDOWS-WAMP.md](docs/DEPLOY-WINDOWS-WAMP.md) | نصب روی ویندوز و WAMP گام‌به‌گام |
 | [docs/DEPLOY-SERVER-LINUX.md](docs/DEPLOY-SERVER-LINUX.md) | سرور لینوکس، Nginx، SSL، systemd |

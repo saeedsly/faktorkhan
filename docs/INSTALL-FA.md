@@ -599,6 +599,7 @@ START-WINDOWS.bat
 - فهرست کامل ۱۲۰ قابلیت: داخل برنامه → **قابلیت‌ها**
 - مستندات API: `http://127.0.0.1:8000/api/docs`
 - معماری فنی: [ARCHITECTURE.md](ARCHITECTURE.md)
+- فناوری‌های به‌کاررفته: [STACK-FA.md](STACK-FA.md)
 - راهنمای مالک (فروش، پشتیبانی، پشتیبان): [OWNER-GUIDE.md](OWNER-GUIDE.md)
 - صفحه **پشتیبانی** در برنامه → ارسال پیام مستقیم
 
