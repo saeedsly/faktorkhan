@@ -93,6 +93,19 @@ build_windows.bat
 ISCC installer\faktorkhan.iss
 ```
 
+### الف-۲) چند کاربر / شبکه / اینترنت (WAMP + MySQL)
+
+روی **`SETUP-MYSQL-WINDOWS.bat`** دوبار کلیک کنید (MySQL باید روشن باشد) و پرسش‌ها را
+با Enter رد کنید؛ سپس **`START-SERVER-WINDOWS.bat`** را اجرا کنید.
+
+این دو اسکریپت به‌طور خودکار: پایگاه داده و کاربر اختصاصی MySQL را می‌سازند،
+کلیدهای امنیتی تصادفی می‌سازند، `.env` را تنظیم می‌کنند، پورت را در فایروال باز
+می‌کنند و برنامه را روی شبکه اجرا می‌کنند.
+
+راهنمای کامل سه سناریو (تک‌کاربره / شبکه محلی / اینترنت با HTTPS):
+[docs/DEPLOY-WINDOWS-WAMP.md](docs/DEPLOY-WINDOWS-WAMP.md)
+· چک‌لیست امنیتی برای انتشار اینترنتی: [docs/SECURITY-FA.md](docs/SECURITY-FA.md)
+
 ### ب) اجرا روی سرور با MySQL
 
 ```bash

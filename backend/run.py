@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 import threading
 import webbrowser
@@ -16,6 +17,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.config import settings  # noqa: E402
+
+
+def _lan_ips() -> list[str]:
+    """آدرس‌های IPv4 این سیستم در شبکهٔ محلی (برای حالت سرور)."""
+    ips: list[str] = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        first = s.getsockname()[0]
+        if not first.startswith(("127.", "169.254.", "0.")):
+            ips.append(first)
+        s.close()
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in ips and not ip.startswith(("127.", "169.254.", "0.")):
+                ips.append(ip)
+    except OSError:
+        pass
+    return ips
 
 
 def main() -> None:
@@ -35,6 +59,13 @@ def main() -> None:
             info = result["owner"]
             print(f"\nحساب مالک → {info['email']} / {info['password']}\n")
 
+    if args.host in {"0.0.0.0", "::"}:
+        print("\nحالت سرور: برنامه برای شبکه باز است.")
+        print(f"  همین سیستم:   http://127.0.0.1:{args.port}")
+        for ip in _lan_ips():
+            print(f"  شبکهٔ محلی:   http://{ip}:{args.port}")
+        print()
+
     if not args.no_browser:
         url_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
         threading.Timer(1.6, lambda: webbrowser.open(f"http://{url_host}:{args.port}/")).start()
@@ -48,6 +79,9 @@ def main() -> None:
         reload=args.reload,
         log_level="info",
         access_log=True,
+        server_header=False,          # نام و نسخهٔ سرور افشا نشود
+        proxy_headers=settings.TRUST_PROXY,
+        forwarded_allow_ips="127.0.0.1" if settings.TRUST_PROXY else None,
     )
 
 

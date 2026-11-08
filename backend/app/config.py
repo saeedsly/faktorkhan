@@ -95,12 +95,47 @@ class Settings:
     OWNER_EMAIL: str = os.getenv("OWNER_EMAIL", "owner@localhost")
     OWNER_PASSWORD: str = os.getenv("OWNER_PASSWORD", "")
 
+    # --- امنیت استقرار روی اینترنت ------------------------------------
+    # اگر برنامه پشت Apache/Nginx روی همان سرور است، TRUST_PROXY=1 کنید تا
+    # IP واقعی کاربر از X-Forwarded-For خوانده شود (وگرنه همه 127.0.0.1 دیده می‌شوند).
+    TRUST_PROXY: bool = _bool("TRUST_PROXY", False)
+    # فهرست دامنه‌های مجاز با کاما؛ در حالت خالی بررسی Host انجام نمی‌شود.
+    # نمونه: ALLOWED_HOSTS=faktorkhan.ir,www.faktorkhan.ir
+    ALLOWED_HOSTS: str = os.getenv("ALLOWED_HOSTS", "").strip()
+    # مستندات API (Swagger) در حالت production به‌صورت پیش‌فرض خاموش است.
+    ENABLE_API_DOCS: bool = _bool("ENABLE_API_DOCS", False)
+    # اگر پشت HTTPS هستید 1 کنید تا کوکی/هدر HSTS هم فعال شود.
+    # پشت پراکسی (Apache/nginx): هدرهای X-Forwarded-* باور شوند
+    PROXY_HEADERS: bool = _bool("PROXY_HEADERS", False)
+    FORWARDED_ALLOW_IPS: str = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1").strip()
+    FORCE_HTTPS: bool = _bool("FORCE_HTTPS", False)
+    HSTS_SECONDS: int = _int("HSTS_SECONDS", 31536000)
+    # محدودیت نرخ برای ورود/ثبت‌نام (به تفکیک IP)
+    LOGIN_RATE_LIMIT: int = _int("LOGIN_RATE_LIMIT", 20)
+    LOGIN_RATE_WINDOW: int = _int("LOGIN_RATE_WINDOW", 300)
+
     # --- CORS --------------------------------------------------------
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
 
     # --- اجرا --------------------------------------------------------
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = _int("PORT", 8000)
+
+    @property
+    def is_prod(self) -> bool:
+        return self.APP_ENV.strip().lower() in {"production", "prod"}
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        return [h.strip() for h in self.ALLOWED_HOSTS.split(",") if h.strip()]
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        items = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        if self.is_prod and "*" in items:
+            # در محیط عملیاتی، «همه‌جا مجاز» را نادیده می‌گیریم (همان‌مبدأ)
+            return []
+        return items
 
     @property
     def storage_uploads(self) -> Path:

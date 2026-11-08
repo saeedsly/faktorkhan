@@ -452,6 +452,9 @@ const Admin = (() => {
             ${cloud.token_set ? `<button class="btn danger" id="c-clear">حذف توکن</button>` : ""}
           </div>
           <p class="hint mt-12">پس از ذخیره، مقدار توکن قابل بازیابی نیست؛ تنها امکان جایگزینی وجود دارد.</p>
+          ${cloud.gateway_ready ? "" : `<div class="warn-item mt-12"><svg class="ic"><use href="#i-info"/></svg>
+            <span>درگاه سرویس ابری هنوز روی سرور تنظیم نشده است. مقدار <b class="mono">CLOUD_OCR_GATEWAY</b> را در
+            فایل <b class="mono">.env</b> بگذارید، برنامه را یک‌بار ببندید و دوباره اجرا کنید؛ سپس توکن را اینجا ثبت کنید.</span></div>`}
         </div>
         <div class="dash-col">
           <div class="card">

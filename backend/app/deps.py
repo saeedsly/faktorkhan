@@ -14,9 +14,15 @@ from .security import decode_token
 
 
 def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
+    """IP کاربر؛ X-Forwarded-For فقط وقتی پروکسی مورد اعتماد است خوانده می‌شود.
+
+    خواندن بدون اعتبارسنجی این هدر اجازهٔ جعل IP و دورزدن محدودیت نرخ را می‌دهد،
+    بنابراین به‌صورت پیش‌فرض خاموش است و با TRUST_PROXY=1 روشن می‌شود.
+    """
+    if settings.TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()[:64]
     return (request.client.host if request.client else "")[:64]
 
 

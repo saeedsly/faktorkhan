@@ -851,7 +851,7 @@ const Views = (() => {
     el.innerHTML = `
       <div class="section-title">
         <div>
-          <button class="btn sm ghost" onclick="history.back?history.back():null" style="margin-bottom:6px">
+          <button class="btn sm ghost" id="d-back" style="margin-bottom:6px">
             <svg class="ic" style="width:14px;height:14px"><use href="#i-arrow"/></svg>بازگشت</button>
           <h3>فاکتور ${esc(inv.number || "بدون شماره")} ${badge(inv.status)}</h3>
           <p>${esc(typeFa[inv.invoice_type] || "")} • ${esc(sourceFa[inv.source] || "")} • ثبت در ${esc(inv.created_at || "")}</p>
@@ -914,6 +914,7 @@ const Views = (() => {
         </div>
       </div>`;
 
+    $("#d-back", el).onclick = () => history.back();
     $("#d-print", el).onclick = () => printInvoice(inv.id);
     $("#d-download", el).onclick = () => {
       if (!inv.has_file) return toast("فایل اصلی برای این فاکتور ذخیره نشده است", { type: "warn" });

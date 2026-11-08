@@ -124,7 +124,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
 
 @router.post("/login")
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
-    rate_limit(request, "login", limit=20, window=300)
+    rate_limit(request, "login", limit=settings.LOGIN_RATE_LIMIT, window=settings.LOGIN_RATE_WINDOW)
     email = payload.email.lower().strip()
     user = db.query(User).filter(User.email == email).first()
     now = utcnow()
