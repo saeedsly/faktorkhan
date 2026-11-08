@@ -1,0 +1,9 @@
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.zip binary
+*.ico binary
+*.bmp binary
+*.woff2 binary
