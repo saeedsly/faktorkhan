@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 
 from ..jalali import jalali_pretty
-from ..models import Invoice
+from ..models import Invoice, utcnow
 
 HEADERS = [
     "شناسه", "شماره فاکتور", "تاریخ", "نوع", "جهت", "فروشنده", "خریدار",
@@ -155,5 +155,5 @@ def to_json(invoices: list[Invoice]) -> bytes:
         }
         for inv in invoices
     ]
-    return json.dumps({"generated_at": datetime.utcnow().isoformat(), "count": len(data), "invoices": data},
+    return json.dumps({"generated_at": utcnow().isoformat(), "count": len(data), "invoices": data},
                       ensure_ascii=False, indent=2).encode("utf-8")

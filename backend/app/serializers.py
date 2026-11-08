@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from .jalali import gregorian_from_dt
-from .models import Invoice, LicenseKey, OcrJob, Plan, Subscription, SupportMessage, User
+from .models import (
+    Invoice, LicenseKey, OcrJob, Plan, Subscription, SupportMessage, User, utcnow,
+)
 
 
 def fa_date(value: datetime | None) -> str:
@@ -69,7 +71,7 @@ def subscription_public(sub: Subscription | None) -> dict | None:
         "max_devices": plan.max_devices if plan else 1,
         "device_count": len([d for d in (sub.devices or "").split(",") if d]),
         "notes": sub.notes,
-        "support_active": bool(sub.support_until and sub.support_until >= datetime.utcnow()),
+        "support_active": bool(sub.support_until and sub.support_until >= utcnow()),
     }
 
 

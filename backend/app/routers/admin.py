@@ -443,7 +443,7 @@ def backup(request: Request, owner: User = Depends(require_owner), db: Session =
 
     payload = {
         "meta": {"app": settings.APP_NAME, "version": settings.APP_VERSION,
-                 "generated_at": datetime.utcnow().isoformat(), "date": today_jalali()},
+                 "generated_at": utcnow().isoformat(), "date": today_jalali()},
         "users": rows(User, ["id", "full_name", "email", "phone", "company", "role", "is_active", "created_at"]),
         "plans": rows(Plan, ["id", "code", "name", "price", "duration_days", "page_quota"]),
         "license_keys": rows(LicenseKey, ["id", "key", "plan_id", "status", "redeemed_by", "created_at"]),
