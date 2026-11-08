@@ -45,6 +45,19 @@ $checks[] = row('حداکثر زمان اجرا', true, (string) ini_get('max_ex
 $dir = __DIR__;
 $checks[] = row('دسترسی نوشتن در پوشهٔ برنامه', is_writable($dir), $dir, false);
 
+/* پوشه‌های کاری — برنامه خودش می‌سازد، ولی بهتر است از قبل بررسی شوند */
+foreach (array('fk-jobs' => 'کارهای در جریان', 'fk-uploads' => 'فایل‌های موقت آپلود',
+               'fk-sessions' => 'نشست‌ها') as $folder => $label) {
+    $path = __DIR__ . '/' . $folder;
+    $ready = is_dir($path) ? is_writable($path) : is_writable(__DIR__);
+    $checks[] = row('پوشهٔ ' . $label . ' (' . $folder . ')',
+        $ready,
+        is_dir($path) ? (is_writable($path) ? 'آماده' : 'قابل نوشتن نیست') : 'خودکار ساخته می‌شود',
+        true);
+}
+$tmpDir = (string) session_save_path();
+$checks[] = row('مسیر ذخیرهٔ نشست', $tmpDir !== '', $tmpDir !== '' ? $tmpDir : 'پیش‌فرض PHP');
+
 $cfgFile = __DIR__ . '/fk-config.json';
 if (is_file($cfgFile)) {
     $cfg = json_decode((string) @file_get_contents($cfgFile), true);

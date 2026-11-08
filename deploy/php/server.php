@@ -29,9 +29,10 @@ $name = basename($uri);
 $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
 
 if ($name === 'fk-config.json'
-    || in_array($ext, array('log', 'ini', 'sql', 'md', 'bak', 'json'), true)
+    || in_array($ext, array('log', 'ini', 'sql', 'md', 'bak', 'json', 'lock', 'txt'), true)
     || strpos($uri, '/fk-uploads/') === 0
     || strpos($uri, '/fk-sessions/') === 0
+    || strpos($uri, '/fk-jobs/') === 0
     || strpos($uri, '/.') === 0) {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');

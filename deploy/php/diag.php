@@ -106,7 +106,7 @@ function raw_call(array $fields, ?string $fileField = null, ?string $filePath = 
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => $payload,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => (int) ($c['timeout'] ?? 60),
+        CURLOPT_TIMEOUT => 30,   // کوتاه تا صفحهٔ عیب‌یابی سرور را قفل نکند
         CURLOPT_CONNECTTIMEOUT => 20,
         CURLOPT_SSL_VERIFYPEER => $verify,
         CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,

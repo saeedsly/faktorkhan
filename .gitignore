@@ -37,4 +37,6 @@ Thumbs.db
 deploy/php/fk-sessions/
 deploy/php/fk-config.json
 deploy/php/fk-uploads/
+deploy/php/fk-jobs/
+deploy/php/fk-lock.json
 deploy/php/fk-diag-sample.png

@@ -1,444 +1,215 @@
 <?php
 /**
- * فاکتورخوان — نسخهٔ آزمایشی PHP برای WAMP / XAMPP
- * ==================================================
- * یک فایل، بدون وابستگی بیرونی. در htdocs بگذارید و باز کنید.
+ * فاکتورخوان — نسخهٔ PHP برای WAMP / XAMPP
+ * =========================================
+ * یک برنامه، بدون پایگاه داده. توکن هرگز نمایش داده نمی‌شود.
  *
- * کارها:
- *   • ثبت توکن سرویس ابری (در فایل config.json کنار همین فایل، بیرون از web root نیست ولی
- *     با .htaccess مسدود می‌شود) و هرگز نمایش ندادن آن
- *   • ورود با گذرواژهٔ محلی
- *   • آپلود عکس/PDF و ارسال به سرویس ابری و نمایش متن استخراج‌شده
- *   • نمایش اعتبار سرویس
+ * معماری درخواست‌های کوتاه:
+ *   index.php                 صفحه (بدون عملیات طولانی)
+ *   index.php?api=start       آپلود + ثبت فایل + شروع تبدیل  (چند ثانیه)
+ *   index.php?api=job&id=…    وضعیت یک کار  (سریع، هر ۳ ثانیه از مرورگر)
+ *   index.php?api=cancel&id=… لغو کار
  *
- * نکته: این نسخه برای «تست سرویس ابری» است. نسخهٔ کامل (فاکتورها، اشتراک، گزارش‌ها)
- * همان برنامهٔ پایتون است.
- *
- * نیازمندی: PHP 7.4+ (روی WAMP ویندوز ۷ معمولاً 7.4 یا 8.0 هست) با افزونه‌های curl/json.
+ * هیچ درخواستی منتظر پایان OCR نمی‌ماند؛ بنابراین صفحه قفل نمی‌شود و
+ * «صفحهٔ سفید» رخ نمی‌دهد.
  */
 
 declare(strict_types=1);
 
-/* جانشین توابع mbstring برای سرورهایی که این افزونه را فعال نکرده‌اند. */
-if (!function_exists('mb_substr')) {
-    function mb_substr($str, $start, $length = null, $encoding = null)
-    {
-        return $length === null ? substr((string) $str, (int) $start)
-            : substr((string) $str, (int) $start, (int) $length);
-    }
-}
-if (!function_exists('mb_strlen')) {
-    function mb_strlen($str, $encoding = null)
-    {
-        return strlen((string) $str);
-    }
-}
+require_once __DIR__ . '/lib.php';
 
-@ini_set('display_errors', '0');
-error_reporting(E_ALL);
+@ini_set('display_errors', '1');
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 @date_default_timezone_set('Asia/Tehran');
+@set_time_limit(120);
 
-const APP_TITLE = 'فاکتورخوان — آزمون سرویس ابری';
-const CONFIG_FILE = __DIR__ . '/fk-config.json';
-const UPLOAD_DIR = __DIR__ . '/fk-uploads';
+const APP_TITLE = 'فاکتورخوان — خوانش فاکتور با سرویس ابری';
 
-/* آدرس درگاه: مبهم‌سازی‌شده (XOR + Base64) تا در سورس و صفحه دیده نشود. */
-function gateway_url(): string
+/* ═══════════════════════════ API ═══════════════════════════ */
+
+function json_out(array $data, int $status = 200): void
 {
-    $cfg = load_config();
-    if (!empty($cfg['gateway'])) {
-        return (string) $cfg['gateway'];
-    }
-    $b64 = 'Mi4uKilgdXUtLS10Pzg1' . 'NXQzKHU7KjN1NTkodT0/' . 'Li07Iw==';
-    $raw = base64_decode($b64, true);
-    if ($raw === false) {
-        return '';
-    }
-    $out = '';
-    for ($i = 0, $n = strlen($raw); $i < $n; $i++) {
-        $out .= chr(ord($raw[$i]) ^ 0x5A);
-    }
-    return $out;
-}
-
-function is_https(): bool
-{
-    return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-}
-
-function start_session(): void
-{
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        return;
-    }
-    /* در ویندوز، پوشهٔ پیش‌فرض سشن (مثلاً C:\Windows\Temp) ممکن است قابل نوشتن نباشد؛
-       آن‌وقت سشن پاک می‌شود و کاربر در حلقهٔ ورود گیر می‌کند. مسیر محلی می‌گذاریم. */
-    $savePath = __DIR__ . '/fk-sessions';
-    if (!is_dir($savePath)) {
-        @mkdir($savePath, 0700, true);
-    }
-    if (is_dir($savePath) && is_writable($savePath)) {
-        @session_save_path($savePath);
-    }
-    if (@session_save_path() === '' || !is_writable(@session_save_path())) {
-        @session_save_path(sys_get_temp_dir());
-    }
-
-    $cookieOk = false;
-    if (PHP_VERSION_ID >= 70300) {
-        $cookieOk = @session_set_cookie_params(array(
-            'lifetime' => 0,
-            'path' => '/',
-            'httponly' => true,
-            'samesite' => 'Lax',
-            'secure' => is_https(),
-        ));
-    }
-    if (!$cookieOk) {
-        @session_set_cookie_params(0, '/; samesite=Lax', '', is_https(), true);
-    }
-    session_name('fksid');
-    @session_start();
-}
-
-function csrf_token(): string
-{
-    start_session();
-    if (empty($_SESSION['csrf'])) {
-        $_SESSION['csrf'] = bin2hex(random_bytes(24));
-    }
-    return $_SESSION['csrf'];
-}
-
-function csrf_ok(?string $token): bool
-{
-    start_session();
-    return is_string($token) && !empty($_SESSION['csrf']) && hash_equals($_SESSION['csrf'], $token);
-}
-
-function load_config(): array
-{
-    if (!is_file(CONFIG_FILE)) {
-        return array();
-    }
-    $raw = @file_get_contents(CONFIG_FILE);
-    if ($raw === false) {
-        return array();
-    }
-    $data = json_decode($raw, true);
-    return is_array($data) ? $data : array();
-}
-
-function save_config(array $cfg): bool
-{
-    $json = json_encode($cfg, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    if ($json === false) {
-        return false;
-    }
-    $ok = @file_put_contents(CONFIG_FILE, $json, LOCK_EX);
-    if ($ok !== false) {
-        @chmod(CONFIG_FILE, 0600);
-    }
-    return $ok !== false;
-}
-
-function h(?string $v): string
-{
-    return htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-}
-
-function is_logged_in(): bool
-{
-    start_session();
-    return !empty($_SESSION['auth']) && $_SESSION['auth'] === true;
-}
-
-function password_is_set(): bool
-{
-    $cfg = load_config();
-    return !empty($cfg['password_hash']);
-}
-
-function token_is_set(): bool
-{
-    $cfg = load_config();
-    return !empty($cfg['token']);
-}
-
-function mask(?string $value): string
-{
-    $value = (string) $value;
-    if ($value === '') {
-        return '';
-    }
-    if (strlen($value) <= 12) {
-        return str_repeat('•', 12);
-    }
-    return str_repeat('•', 12) . substr($value, -4);
-}
-
-/**
- * فراخوانی درگاه سرویس ابری. توکن فقط اینجا استفاده می‌شود و در هیچ خروجی نمی‌آید.
- * @return array{ok:bool,data:array,message:string,code:string}
- */
-function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime = null, string $fileName = ''): array
-{
-    $cfg = load_config();
-    $uploadMethod = '';
-    if ($filePath !== null) {
-        $uploadMethod = strtolower((string) ($cfg['upload_method'] ?? 'multipart'));
-    }
-    $url = gateway_url();
-    $token = (string) ($cfg['token'] ?? '');
-    $timeout = (int) ($cfg['timeout'] ?? 180);
-    $verify = array_key_exists('verify_tls', $cfg) ? (bool) $cfg['verify_tls'] : true;
-
-    if ($url === '') {
-        return array('ok' => false, 'data' => array(), 'message' => 'درگاه تنظیم نشده است.', 'code' => 'NoGateway');
-    }
-    if ($token === '') {
-        return array('ok' => false, 'data' => array(), 'message' => 'ابتدا توکن را ثبت کنید.', 'code' => 'NoToken');
-    }
-    if (!function_exists('curl_init')) {
-        return array('ok' => false, 'data' => array(),
-            'message' => 'افزونهٔ curl در PHP فعال نیست. در php.ini خط extension=curl را از کامنت خارج کنید.',
-            'code' => 'NoCurl');
-    }
-
-    $payload = $fields;
-    $payload['token'] = $token;
-    if ($filePath !== null) {
-        /* مهم: نام فایل باید نام اصلی باشد (مثلاً invoice.jpg)، نه نام پوشهٔ موقت
-           (php3F2A.tmp). بعضی سرویس‌ها از پسوند نام، نوع فایل را تشخیص می‌دهند و
-           با پسوند .tmp فایل را قبول نمی‌کنند و توکن برنمی‌گردانند. */
-        $safeName = $fileName ?: basename($filePath);
-        if (!empty($cfg['simple_filename'])) {
-            $safeName = 'document' . (pathinfo($safeName, PATHINFO_EXTENSION) ? '.' . pathinfo($safeName, PATHINFO_EXTENSION) : '');
-        }
-        if ($uploadMethod === 'base64') {
-            /* روش جایگزین: برابر مستندات، «محتویات» فایل را در همان فیلد می‌فرستیم.
-               برای فایل‌های کوچک مناسب است (حجم ~۱.۳۳ برابر می‌شود). */
-            $raw = @file_get_contents($filePath);
-            if ($raw === false) {
-                return array('ok' => false, 'data' => array(),
-                    'message' => 'خواندن فایل برای ارسال ممکن نشد.', 'code' => 'ReadFile');
-            }
-            $payload['filehandle'] = base64_encode($raw);
-            $payload['filename'] = $safeName;
-            $payload['filemime'] = $fileMime ?: 'application/octet-stream';
-        } elseif (class_exists('CURLFile')) {
-            $payload['filehandle'] = new CURLFile($filePath, $fileMime ?: 'application/octet-stream', $safeName);
-        } else {
-            // PHP 5.4 و قدیمی‌تر: نحو @ نیاز به تنظیم اضافی دارد
-            $payload['filehandle'] = '@' . $filePath . ';filename=' . $safeName
-                . ';type=' . ($fileMime ?: 'application/octet-stream');
-        }
-    }
-
-    $ch = curl_init();
-    curl_setopt_array($ch, array(
-        CURLOPT_URL => $url,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => $timeout,
-        CURLOPT_CONNECTTIMEOUT => 20,
-        CURLOPT_SSL_VERIFYPEER => $verify,
-        CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_USERAGENT => 'FactorKhan-PHP/1.0',
-    ));
-    if (!class_exists('CURLFile') && defined('CURLOPT_SAFE_UPLOAD')) {
-        /* PHP 5.4: بدون این تنظیم، رشتهٔ @... به‌عنوان متن ارسال می‌شود نه فایل */
-        curl_setopt($ch, CURLOPT_SAFE_UPLOAD, false);
-    }
-    $body = curl_exec($ch);
-    $err = curl_error($ch);
-    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($body === false) {
-        return array('ok' => false, 'data' => array(),
-            'message' => 'ارتباط با سرویس ابری برقرار نشد: ' . scrub($err, $token), 'code' => 'Network');
-    }
-    $data = json_decode((string) $body, true);
-    /* باید یک «شیء» JSON باشد، نه آرایه یا متن ساده */
-    $is_object_shape = is_array($data) && ($data === array() || array_keys($data) !== range(0, count($data) - 1));
-    if (!$is_object_shape) {
-        $snippet = trim(scrub(mb_substr((string) $body, 0, 200), $token));
-        return array('ok' => false, 'data' => array(),
-            'message' => 'پاسخ سرویس ابری قابل تفسیر نیست (کد ' . $status . '). '
-                . ($snippet !== '' ? 'پاسخ: ' . $snippet : 'پاسخ خالی بود.'),
-            'code' => 'BadResponse');
-    }
-    $st = (string) ($data['Status'] ?? '');
-    $errors = array(
-        'FileCorrupted' => 'فایل ارسالی خراب، غیرمجاز یا رمزدار است.',
-        'NoEnoughCredit' => 'اعتبار سرویس ابری کافی نیست.',
-        'UploadFailed' => 'خطا در بارگذاری فایل به سرویس ابری.',
-        'TokenNotFound' => 'فایل یا توکن یافت نشد. توکن را بررسی کنید.',
-        'MethodNotAllowed' => 'این روش تبدیل برای فایل انتخاب‌شده مجاز نیست.',
-        'FileDeletedFromServer' => 'فایل از سرور ابری حذف شده است.',
-        'ConvertError' => 'خطا در تبدیل فایل.',
-        'IPError' => 'IP این سرور مجاز نیست.',
-        'UnkwonURL' => 'لینک ارسالی معتبر نیست.',
-        'UnknowURL' => 'لینک ارسالی معتبر نیست.',
-        'UnknowMethod' => 'روش تبدیل نامعتبر است.',
-    );
-    if (isset($errors[$st])) {
-        return array('ok' => false, 'data' => $data, 'message' => $errors[$st], 'code' => $st);
-    }
-    if (strtolower($st) === 'error' || strtolower($st) === 'failed') {
-        return array('ok' => false, 'data' => $data,
-            'message' => scrub((string) ($data['Message'] ?? 'خطای نامشخص'), $token), 'code' => 'Error');
-    }
-    return array('ok' => true, 'data' => $data, 'message' => '', 'code' => $st);
-}
-
-/**
- * یافتن اولین مقدار «توکن فایل» در پاسخ، حتی اگر کلید نام دیگری داشته باشد
- * یا داخل یک شیء تودرتو باشد.
- */
-function find_file_token(array $data): string
-{
-    $candidates = array('FileToken', 'Filetoken', 'filetoken', 'fileToken', 'File_Token', 'Token', 'token');
-    foreach ($candidates as $k) {
-        if (!empty($data[$k]) && is_scalar($data[$k])) {
-            return trim((string) $data[$k]);
-        }
-    }
-    foreach ($data as $v) {
-        if (is_array($v)) {
-            $found = find_file_token($v);
-            if ($found !== '') {
-                return $found;
-            }
-        }
-    }
-    return '';
-}
-
-function scrub(string $text, string $token): string
-{
-    if ($token !== '') {
-        $text = str_replace($token, '«مخفی»', $text);
-        if (strlen($token) > 6) {
-            $text = str_replace(substr($token, 0, 6), '«مخفی»', $text);
-        }
-    }
-    return mb_substr($text, 0, 500);
-}
-
-/**
- * دانلود فایل خروجی از لینکی که سرویس ابری داده است.
- * لینک فقط از پاسخ JSON خوانده می‌شود (نه از ورودی کاربر) تا SSRF رخ ندهد.
- * @return array{ok:bool,body:string,suffix:string,message:string}
- */
-function download_output(string $url): array
-{
-    $cfg = load_config();
-    $verify = array_key_exists('verify_tls', $cfg) ? (bool) $cfg['verify_tls'] : true;
-    $parts = parse_url($url);
-    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
-    if (!in_array($scheme, array('http', 'https'), true) || empty($parts['host'])) {
-        return array('ok' => false, 'body' => '', 'suffix' => '', 'message' => 'لینک خروجی معتبر نیست.');
-    }
-    if (!function_exists('curl_init')) {
-        return array('ok' => false, 'body' => '', 'suffix' => '', 'message' => 'افزونهٔ curl فعال نیست.');
-    }
-    $ch = curl_init();
-    curl_setopt_array($ch, array(
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => (int) ($cfg['timeout'] ?? 180),
-        CURLOPT_CONNECTTIMEOUT => 20,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 3,
-        CURLOPT_SSL_VERIFYPEER => $verify,
-        CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
-        CURLOPT_USERAGENT => 'FactorKhan-PHP/1.0',
-    ));
-    $body = curl_exec($ch);
-    $err = curl_error($ch);
-    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($body === false) {
-        return array('ok' => false, 'body' => '', 'suffix' => '', 'message' => 'دانلود خروجی ناموفق بود: ' . scrub($err, ''));
-    }
-    if ($status >= 400) {
-        return array('ok' => false, 'body' => '', 'suffix' => '', 'message' => 'دانلود خروجی ناموفق بود (کد ' . $status . ').');
-    }
-    $suffix = strtolower((string) pathinfo((string) parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
-    return array('ok' => true, 'body' => (string) $body, 'suffix' => $suffix, 'message' => '');
-}
-
-function flash(string $type, string $message): void
-{
-    start_session();
-    $_SESSION['flash'] = array('type' => $type, 'message' => $message);
-}
-
-function take_flash(): ?array
-{
-    start_session();
-    if (empty($_SESSION['flash'])) {
-        return null;
-    }
-    $f = $_SESSION['flash'];
-    unset($_SESSION['flash']);
-    return $f;
-}
-
-function redirect(string $where = ''): void
-{
-    $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-    header('Location: ' . $self . ($where ? '?' . $where : ''), true, 303);
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-function upload_error_text(int $code): string
-{
-    $map = array(
-        UPLOAD_ERR_INI_SIZE => 'حجم فایل از حد مجاز php.ini (upload_max_filesize) بیشتر است.',
-        UPLOAD_ERR_FORM_SIZE => 'حجم فایل از حد مجاز فرم بیشتر است.',
-        UPLOAD_ERR_PARTIAL => 'فایل ناقص آپلود شد. دوباره تلاش کنید.',
-        UPLOAD_ERR_NO_FILE => 'فایلی انتخاب نشد.',
-        UPLOAD_ERR_NO_TMP_DIR => 'پوشهٔ موقت روی سرور وجود ندارد.',
-        UPLOAD_ERR_CANT_WRITE => 'نوشتن فایل روی دیسک ممکن نشد.',
-        UPLOAD_ERR_EXTENSION => 'آپلود توسط یکی از افزونه‌های PHP متوقف شد.',
-    );
-    return $map[$code] ?? ('خطای آپلود (کد ' . $code . ')');
+$api = (string) ($_GET['api'] ?? '');
+
+if ($api !== '') {
+    start_session();
+    if (!is_logged_in()) {
+        json_out(array('ok' => false, 'error' => 'auth', 'message' => 'نشست شما منقضی شده است؛ صفحه را دوباره باز کنید.'), 401);
+    }
+
+    /* نشست را همین‌جا می‌بندیم: فایل نشست قفل می‌ماند اگر بسته نشود و
+       درخواست‌های موازی مرورگر (poll، لغو، تب دیگر) پشت هم صف می‌کشند. */
+    $freeSession = static function (): void {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            @session_write_close();
+        }
+    };
+
+    /* ── وضعیت کار ─────────────────────────────────────────── */
+    if ($api === 'job') {
+        $id = (string) ($_GET['id'] ?? '');
+        $job = job_load($id);
+        if ($job === null) {
+            json_out(array('ok' => false, 'error' => 'notfound', 'message' => 'این کار پیدا نشد.'), 404);
+        }
+        $freeSession();
+        $terminal = in_array($job['status'], array('done', 'failed', 'cancelled'), true);
+        if (!$terminal || !empty($job['cleanup_pending'])) {
+            $job = job_tick($job);   // یک قدم کوتاه (حداکثر یک فراخوانی درگاه)
+        }
+        json_out(array(
+            'ok' => true,
+            'job' => array(
+                'id' => $job['id'],
+                'status' => $job['status'],
+                'stage' => $job['stage'],
+                'progress' => (int) $job['progress'],
+                'message' => $job['message'],
+                'text' => (string) ($job['text'] ?? ''),
+                'pages' => (int) ($job['pages'] ?? 0),
+                'saved' => (string) ($job['saved'] ?? ''),
+                'cleanup' => !empty($job['cleanup_pending']),
+                'method' => (int) ($job['method'] ?? 0),
+                'name' => (string) ($job['name'] ?? ''),
+                'age' => time() - (int) ($job['created_at'] ?? time()),
+            ),
+        ));
+    }
+
+    /* ── لغو کار ───────────────────────────────────────────── */
+    if ($api === 'cancel') {
+        $id = (string) ($_GET['id'] ?? '');
+        $job = job_load($id);
+        if ($job === null) {
+            json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
+        }
+        $freeSession();
+        /* اگر کار هنوز به سرویس ابری نرفته، فقط فایل محلی پاک می‌شود؛
+           وگرنه هم تبدیل و هم فایل روی سرویس ابری حذف می‌شوند
+           (تا اعتبار/توکن شما بی‌دلیل مصرف نشود). */
+        if (!empty($job['file_token'])) {
+            call_gateway(array('command' => 'cancelconvert', 'filetoken' => $job['file_token']), null, null, '', 12);
+            call_gateway(array('command' => 'deletefile', 'filetoken' => $job['file_token']), null, null, '', 12);
+        }
+        job_drop_local($job);
+        $job['status'] = 'cancelled';
+        $job['stage'] = 'cancelled';
+        $job['message'] = 'کار توسط شما لغو شد.';
+        job_save($job);
+        json_out(array('ok' => true));
+    }
+
+    /* ── شروع کار (آپلود) ──────────────────────────────────── */
+    if ($api === 'start') {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            json_out(array('ok' => false, 'message' => 'روش نامعتبر.'), 405);
+        }
+        if (!csrf_ok($_POST['csrf'] ?? null)) {
+            json_out(array('ok' => false, 'message' => 'درخواست نامعتبر است؛ صفحه را دوباره باز کنید.'), 400);
+        }
+        if (!token_is_set()) {
+            json_out(array('ok' => false, 'message' => 'ابتدا توکن سرویس ابری را ثبت کنید.'), 400);
+        }
+        $file = $_FILES['document'] ?? null;
+        if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            json_out(array('ok' => false,
+                'message' => $file ? upload_error_text((int) $file['error']) : 'فایلی انتخاب نشد.'), 400);
+        }
+        $cfg = load_config();
+        $maxMb = (int) ($cfg['max_upload_mb'] ?? 25);
+        if ((int) $file['size'] > $maxMb * 1024 * 1024) {
+            json_out(array('ok' => false, 'message' => 'حجم فایل بیشتر از ' . $maxMb . ' مگابایت است.'), 400);
+        }
+        if ((int) $file['size'] === 0) {
+            json_out(array('ok' => false, 'message' => 'فایل خالی است. فایل دیگری انتخاب کنید.'), 400);
+        }
+        $origName = (string) ($file['name'] ?? 'document');
+        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+        $allowed = (array) ($cfg['allowed_ext'] ?? array('pdf', 'jpg', 'jpeg', 'png', 'bmp'));
+        if (!in_array($ext, $allowed, true)) {
+            json_out(array('ok' => false, 'message' => 'این قالب پشتیبانی نمی‌شود: ' . h($ext)), 400);
+        }
+
+        $sendName = preg_replace('/[^\w.\-]/u', '_', basename($origName)) ?: ('document.' . $ext);
+        $mime = (string) ($file['type'] ?? '');
+        if ($mime === '' || $mime === 'application/octet-stream') {
+            $mime = mime_for_ext($ext);
+        }
+
+        $method = max(1, min(4, (int) ($_POST['method'] ?? 4)));
+        $output = (string) ($_POST['output'] ?? 'txtrawjson');
+        $deleteAfter = !empty($_POST['delete_after']);
+
+        /* فایل را روی همین سرور نگه می‌داریم؛ ارسال به سرویس ابری در
+           درخواست‌های کوتاه بعدی (poll) انجام می‌شود. */
+        $stashed = stash_upload((string) $file['tmp_name'], $ext);
+        if ($stashed === '') {
+            json_out(array('ok' => false,
+                'message' => 'ذخیرهٔ فایل روی سرور ممکن نشد. دسترسی نوشتن پوشهٔ fk-uploads را بررسی کنید.'), 500);
+        }
+
+        $job = job_create(array(
+            'name' => $sendName,
+            'ext' => $ext,
+            'method' => $method,
+            'output' => $output,
+            'size' => (int) $file['size'],
+        ));
+        $job = job_queue($job, $stashed, $sendName, $mime, $method, $output, $deleteAfter);
+
+        /* شناسهٔ کار را در نشست نگه می‌داریم تا بعد از رفرش هم قابل بازیابی باشد */
+        $ids = (array) ($_SESSION['jobs'] ?? array());
+        $ids[] = $job['id'];
+        $_SESSION['jobs'] = array_slice($ids, -20);
+        $freeSession();
+
+        json_out(array(
+            'ok' => true,
+            'job' => array(
+                'id' => $job['id'],
+                'status' => $job['status'],
+                'stage' => $job['stage'],
+                'progress' => (int) $job['progress'],
+                'message' => $job['message'],
+                'pages' => (int) $job['pages'],
+                'method' => (int) $job['method'],
+                'name' => $job['name'],
+            ),
+        ));
+    }
+
+    json_out(array('ok' => false, 'message' => 'درخواست ناشناخته.'), 400);
 }
 
-/* ══════════════════════════ مسیرها ══════════════════════════ */
+/* ═══════════════════ عملیات فرم (POST کوتاه) ═══════════════════ */
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$cfg = load_config();
-$needs_setup = !password_is_set() || !token_is_set();
+$action = (string) ($_POST['action'] ?? '');
 
-start_session();
-
-/* --- خروج --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'logout') {
+if ($method === 'POST' && $action === 'logout') {
     if (csrf_ok($_POST['csrf'] ?? null)) {
         $_SESSION = array();
-        session_destroy();
+        @session_destroy();
     }
     header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'), true, 303);
     exit;
 }
 
-/* --- ورود --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'login') {
+if ($method === 'POST' && $action === 'login') {
     if (!csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'درخواست نامعتبر است. صفحه را دوباره باز کنید.');
         redirect();
     }
     $hash = (string) (load_config()['password_hash'] ?? '');
-    $given = (string) ($_POST['password'] ?? '');
-    if ($hash === '' || !password_verify($given, $hash)) {
-        sleep(1);
+    if ($hash === '' || !password_verify((string) ($_POST['password'] ?? ''), $hash)) {
+        usleep(700000);
         flash('error', 'گذرواژه اشتباه است.');
         redirect();
     }
@@ -447,8 +218,7 @@ if ($method === 'POST' && ($_POST['action'] ?? '') === 'login') {
     redirect();
 }
 
-/* --- راه‌اندازی اولیه: تعیین گذرواژه --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'setup_password') {
+if ($method === 'POST' && $action === 'setup_password') {
     if (!csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'درخواست نامعتبر است.');
         redirect();
@@ -465,14 +235,16 @@ if ($method === 'POST' && ($_POST['action'] ?? '') === 'setup_password') {
     }
     $cfg = load_config();
     $cfg['password_hash'] = password_hash($pass, PASSWORD_DEFAULT);
-    save_config($cfg);
+    if (!save_config($cfg)) {
+        flash('error', 'نوشتن فایل تنظیمات ممکن نشد. دسترسی پوشه را بررسی کنید.');
+        redirect();
+    }
     $_SESSION['auth'] = true;
     flash('ok', 'گذرواژه تنظیم شد. حالا توکن سرویس ابری را ثبت کنید.');
     redirect();
 }
 
-/* --- ثبت توکن --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'save_token') {
+if ($method === 'POST' && $action === 'save_token') {
     if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'دسترسی غیرمجاز.');
         redirect();
@@ -484,13 +256,15 @@ if ($method === 'POST' && ($_POST['action'] ?? '') === 'save_token') {
     }
     $cfg = load_config();
     $cfg['token'] = $token;
-    save_config($cfg);
+    if (!save_config($cfg)) {
+        flash('error', 'ذخیرهٔ توکن ممکن نشد (دسترسی نوشتن).');
+        redirect();
+    }
     flash('ok', 'توکن ذخیره شد و دیگر نمایش داده نمی‌شود.');
     redirect();
 }
 
-/* --- حذف توکن --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'clear_token') {
+if ($method === 'POST' && $action === 'clear_token') {
     if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'دسترسی غیرمجاز.');
         redirect();
@@ -502,188 +276,60 @@ if ($method === 'POST' && ($_POST['action'] ?? '') === 'clear_token') {
     redirect();
 }
 
-/* --- تست اعتبار --- */
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'test_credit') {
+if ($method === 'POST' && $action === 'test_credit') {
     if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
         flash('error', 'دسترسی غیرمجاز.');
         redirect();
     }
-    $res = call_gateway(array('command' => 'checkcredit'));
+    $res = call_gateway(array('command' => 'checkcredit'), null, null, '', 25);
     if ($res['ok']) {
         $ocr = (int) ($res['data']['OCRCredit'] ?? 0);
         $audio = (int) ($res['data']['AudioTranscribeCredit'] ?? 0);
-        flash('ok', 'ارتباط برقرار است — اعتبار OCR: ' . number_format($ocr) . ' صفحه، صوت: ' . number_format($audio) . ' ثانیه');
+        flash('ok', 'ارتباط برقرار است — اعتبار OCR: ' . number_format($ocr)
+            . ' صفحه · صوت: ' . number_format($audio) . ' ثانیه');
     } else {
         flash('error', $res['message']);
     }
     redirect();
 }
 
-/* --- پردازش فایل --- */
-$result = null;
-$busy = false;
-if ($method === 'POST' && ($_POST['action'] ?? '') === 'process') {
-    if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
-        flash('error', 'دسترسی غیرمجاز.');
-        redirect();
-    }
-    $busy = true;
-    $file = $_FILES['document'] ?? null;
-    if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        flash('error', $file ? upload_error_text((int) $file['error']) : 'فایلی انتخاب نشد.');
-        redirect();
-    }
-    $maxMb = (int) ($cfg['max_upload_mb'] ?? 25);
-    if ((int) $file['size'] > $maxMb * 1024 * 1024) {
-        flash('error', 'حجم فایل بیشتر از ' . $maxMb . ' مگابایت است.');
-        redirect();
-    }
-    $ext = strtolower(pathinfo((string) $file['name'], PATHINFO_EXTENSION));
-    $allowed = (array) ($cfg['allowed_ext'] ?? array('pdf', 'jpg', 'jpeg', 'png', 'bmp'));
-    if (!in_array($ext, $allowed, true)) {
-        flash('error', 'این قالب پشتیبانی نمی‌شود: ' . $ext);
-        redirect();
-    }
-    if (!is_dir(UPLOAD_DIR) && !@mkdir(UPLOAD_DIR, 0700, true)) {
-        flash('error', 'ساخت پوشهٔ آپلود ممکن نشد. دسترسی نوشتن را بررسی کنید.');
-        redirect();
-    }
-
-    $method_no = max(1, min(4, (int) ($_POST['method'] ?? 4)));
-    $output = (string) ($_POST['output'] ?? 'txtrawjson');
-    $delete_after = !empty($_POST['delete_after']);
-
-    $tmpName = (string) $file['tmp_name'];
-    $originalName = (string) ($file['name'] ?? 'document.' . $ext);
-    /* نام فایل اصلی را به سرویس می‌فرستیم (نه phpXXXX.tmp). */
-    $sendName = preg_replace('/[^\w.\-]/u', '_', basename($originalName)) ?: ('document.' . $ext);
-    $mime = (string) ($file['type'] ?? '');
-    if ($mime === '' || $mime === 'application/octet-stream') {
-        $mimeMap = array(
-            'pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
-            'png' => 'image/png', 'bmp' => 'image/bmp', 'tif' => 'image/tiff', 'tiff' => 'image/tiff',
-            'mp3' => 'audio/mpeg', 'wav' => 'audio/wav', 'm4a' => 'audio/mp4',
-            'mp4' => 'video/mp4', 'ogg' => 'audio/ogg', 'flac' => 'audio/flac', '3gp' => 'video/3gpp',
-        );
-        $mime = $mimeMap[$ext] ?? 'application/octet-stream';
-    }
-    $add = call_gateway(array('command' => 'addfile'), $tmpName, $mime, $sendName);
-    if (!$add['ok']) {
-        $result = array('ok' => false, 'stage' => 'addfile', 'message' => $add['message']);
-    } else {
-        $d = $add['data'];
-        $fileToken = find_file_token($d);
-        $pages = (int) ($d['PageCount'] ?? $d['Pagecount'] ?? 0);
-        $st = (string) ($d['Status'] ?? '');
-        if ($fileToken === '') {
-            /* پیام دقیق: چه وضعیتی برگشت و چه کلیدهایی داشت؟ (بدون افشای توکن) */
-            $keys = $d ? implode(', ', array_keys($d)) : 'هیچ';
-            $detail = 'وضعیت: ' . ($st !== '' ? $st : '(خالی)') . ' — کلیدهای پاسخ: ' . $keys;
-            $result = array(
-                'ok' => false,
-                'stage' => 'addfile',
-                'message' => 'سرور توکن فایل برنگرداند. ' . $detail,
-                'hint' => 'این صفحه را باز کنید تا پاسخ کامل سرور را ببینید: diag.php',
-            );
-        } else {
-            $conv = call_gateway(array(
-                'command' => 'convert',
-                'filetoken' => $fileToken,
-                'method' => $method_no,
-                'output' => $output,
-            ));
-            $downloadUrl = '';
-            if (!$conv['ok']) {
-                $result = array('ok' => false, 'stage' => 'convert', 'message' => $conv['message']);
-                // بعضی فایل‌ها فقط از طریق checkconvert خروجی می‌دهند؛ ادامه می‌دهیم اگر خطای قطعی نبود.
-            } else {
-                $downloadUrl = (string) ($conv['data']['FileToDownload'] ?? $conv['data'][' FileToDownload '] ?? '');
-                $downloadUrl = trim($downloadUrl);
-            }
-
-            $text = null;
-            $progress = 0;
-            $savedName = '';
-            if ($result === null || ($result['ok'] === false && $downloadUrl !== '')) {
-                for ($i = 0; $i < 60; $i++) {
-                    $chk = call_gateway(array('command' => 'checkconvert', 'filetoken' => $fileToken));
-                    if (!$chk['ok']) {
-                        if ($result === null) {
-                            $result = array('ok' => false, 'stage' => 'checkconvert', 'message' => $chk['message']);
-                        }
-                        break;
-                    }
-                    $st = strtolower((string) ($chk['data']['Status'] ?? ''));
-                    $progress = (int) preg_replace('/\D/', '', (string) ($chk['data']['Progress'] ?? '0'));
-                    $candidate = (string) ($chk['data']['Output'] ?? '');
-                    if ($candidate !== '' && !preg_match('/^\s*\{/', $candidate)) {
-                        $decoded = base64_decode($candidate, true);
-                        if ($decoded !== false && $decoded !== '') {
-                            $text = $decoded;
-                        } elseif ($candidate !== '') {
-                            $text = $candidate;
-                        }
-                    }
-                    if ($st === 'done' || $st === 'success' || $st === 'finished') {
-                        break;
-                    }
-                    if ($st === 'error' || $st === 'failed' || $st === 'convertterminated') {
-                        $result = array('ok' => false, 'stage' => 'convert', 'message' => 'تبدیل ناموفق بود.');
-                        break;
-                    }
-                    if ($text !== null) {
-                        break;   // متن آماده است؛ نیازی به انتظار بیشتر نیست
-                    }
-                    sleep(2);
-                }
-                if ($result === null || $result['ok'] === false) {
-                    // اگر متن از checkconvert نیامد، فایل خروجی را دانلود می‌کنیم
-                    if ($text === null && $downloadUrl !== '') {
-                        $dl = download_output($downloadUrl);
-                        if ($dl['ok']) {
-                            $body = $dl['body'];
-                            if (in_array($dl['suffix'], array('txt', 'json', 'csv', 'xml', 'html', 'htm'), true)) {
-                                $text = $body;
-                            } else {
-                                $extOut = preg_replace('/[^a-z0-9]/', '', $dl['suffix'] ?: 'docx');
-                                $safeName = 'fk-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.' . $extOut;
-                                @mkdir(UPLOAD_DIR, 0700, true);
-                                if (@file_put_contents(UPLOAD_DIR . '/' . $safeName, $body) !== false) {
-                                    $savedName = $safeName;
-                                }
-                            }
-                        } elseif ($text === null) {
-                            $result = array('ok' => false, 'stage' => 'download', 'message' => $dl['message']);
-                        }
-                    }
-                }
-                if ($text !== null || $savedName !== '') {
-                    $result = array('ok' => true, 'text' => (string) $text, 'pages' => $pages,
-                        'file_token' => $fileToken, 'progress' => 100, 'saved' => $savedName);
-                } elseif ($result === null) {
-                    $result = array('ok' => false, 'stage' => 'timeout', 'progress' => $progress,
-                        'message' => 'زمان انتظار تمام شد. فایل بزرگ است؛ دوباره تلاش کنید.');
-                }
-                if ($delete_after) {
-                    call_gateway(array('command' => 'deletefile', 'filetoken' => $fileToken));
-                }
-            }
-        }
-    }
-    $busy = false;
+if ($method === 'GET' && isset($_GET['cleanup'])) {
+    job_gc();
+    flash('ok', 'کارهای قدیمی پاک شدند.');
+    redirect();
 }
 
-/* ══════════════════════════ نمایش ══════════════════════════ */
+/* ═══════════════════════════ نمایش ═══════════════════════════ */
 
 $flash = take_flash();
 $logged = is_logged_in();
-$tokenSet = token_is_set();
-$tokenMasked = mask((string) (load_config()['token'] ?? ''));
+$cfg = load_config();
+$tokenSet = !empty($cfg['token']);
+$tokenMasked = mask((string) ($cfg['token'] ?? ''));
 $hasCurl = function_exists('curl_init');
-$hasFileinfo = function_exists('finfo_open');
 $phpOk = version_compare(PHP_VERSION, '7.4', '>=');
-$uploadMax = ini_get('upload_max_filesize');
-$postMax = ini_get('post_max_size');
+$uploadMax = (string) ini_get('upload_max_filesize');
+$postMax = (string) ini_get('post_max_size');
+$csrf = csrf_token();
+
+/* کارهای اخیر این نشست (برای بازیابی بعد از رفرش) */
+$recent = array();
+if ($logged) {
+    start_session();
+    $ids = (array) ($_SESSION['jobs'] ?? array());
+    foreach (array_slice(array_reverse($ids), 0, 5) as $jid) {
+        $j = job_load((string) $jid);
+        if ($j) {
+            $recent[] = array(
+                'id' => $j['id'],
+                'name' => (string) ($j['name'] ?? ''),
+                'status' => $j['status'],
+                'message' => $j['message'],
+                'updated' => (int) $j['updated_at'],
+            );
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -693,48 +339,58 @@ $postMax = ini_get('post_max_size');
 <meta name="robots" content="noindex,nofollow">
 <title><?= h(APP_TITLE) ?></title>
 <style>
-  :root{--bg:#0b0d12;--card:#141824;--line:#252c3b;--txt:#eef1f7;--dim:#98a2b8;--gold:#d4af37;--teal:#2dd4bf;--red:#f0616d;--green:#3ecf8e}
+  :root{--bg:#0b0d12;--card:#141824;--line:#252c3b;--txt:#eef1f7;--dim:#98a2b8;
+        --gold:#d4af37;--teal:#2dd4bf;--red:#f0616d;--green:#3ecf8e}
   *{box-sizing:border-box}
-  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#1a2233 0%,#0b0d12 55%) fixed;color:var(--txt);
-       font-family:Vazirmatn,Tahoma,system-ui,sans-serif;line-height:1.9;padding:16px}
-  .wrap{max-width:900px;margin:0 auto}
-  .brand{display:flex;align-items:center;gap:12px;margin:18px 0 22px}
+  body{margin:0;background:radial-gradient(1100px 560px at 82% -12%,#1a2233 0%,#0b0d12 58%) fixed;
+       color:var(--txt);font-family:Vazirmatn,Tahoma,system-ui,sans-serif;line-height:1.9;padding:16px}
+  .wrap{max-width:960px;margin:0 auto}
+  .brand{display:flex;align-items:center;gap:12px;margin:16px 0 20px}
   .mark{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#f5e6a8,#d4af37);
-        display:grid;place-items:center;color:#1a1508;font-weight:800;font-size:18px}
-  h1{font-size:20px;margin:0}
+        display:grid;place-items:center;color:#1a1508;font-weight:800;font-size:19px}
+  h1{font-size:19px;margin:0}
   .sub{color:var(--dim);font-size:12px}
-  .card{background:linear-gradient(180deg,#151a26,#12161f);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
-  .card h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .card{background:linear-gradient(180deg,#151a26,#12161f);border:1px solid var(--line);
+        border-radius:16px;padding:18px;margin-bottom:14px}
+  .card h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   label{display:block;margin:10px 0 6px;font-size:12px;color:var(--dim)}
   input[type=password],input[type=text],input[type=file],select{width:100%;padding:11px 12px;border-radius:10px;
        border:1px solid var(--line);background:#0e121b;color:var(--txt);font-family:inherit;font-size:14px}
   input[type=file]{padding:9px}
   .row{display:flex;gap:10px;flex-wrap:wrap}
-  .row>*{flex:1;min-width:160px}
+  .row>*{flex:1;min-width:150px}
   button{padding:11px 18px;border-radius:10px;border:1px solid var(--line);background:#1b2130;color:var(--txt);
-         font-family:inherit;font-size:14px;cursor:pointer;font-weight:600}
+         font-family:inherit;font-size:14px;cursor:pointer;font-weight:600;transition:.15s}
   button.primary{background:linear-gradient(135deg,#e8d99a,#d4af37);border-color:#d4af37;color:#231c07}
   button.danger{background:#2a1620;border-color:#5c2433;color:#ffb3bd}
   button.ghost{background:transparent}
-  button:hover{filter:brightness(1.1)}
+  button:hover:not(:disabled){filter:brightness(1.12)}
+  button:disabled{opacity:.55;cursor:not-allowed}
   .muted{color:var(--dim);font-size:12px;margin:6px 0 0}
   .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
   .pill.ok{background:rgba(62,207,142,.14);color:var(--green);border:1px solid rgba(62,207,142,.3)}
   .pill.bad{background:rgba(240,97,109,.13);color:var(--red);border:1px solid rgba(240,97,109,.3)}
+  .pill.wait{background:rgba(212,175,55,.14);color:var(--gold);border:1px solid rgba(212,175,55,.3)}
   .flash{padding:12px 14px;border-radius:12px;margin-bottom:12px;font-size:13px;border:1px solid}
   .flash.ok{background:rgba(62,207,142,.1);border-color:rgba(62,207,142,.35);color:#b8f2d6}
   .flash.error{background:rgba(240,97,109,.1);border-color:rgba(240,97,109,.35);color:#ffc4ca}
-  table{width:100%;border-collapse:collapse;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
   td{padding:7px 4px;border-bottom:1px solid var(--line);color:var(--dim)}
   td:last-child{color:var(--txt);text-align:left}
-  pre{background:#0a0d14;border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;white-space:pre-wrap;
-      direction:rtl;font-size:13px;max-height:420px;font-family:Vazirmatn,Tahoma,monospace}
-  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
-  .kpi div{background:#0e121b;border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:12px;color:var(--dim)}
-  .kpi b{display:block;font-size:18px;color:var(--txt)}
-  .foot{color:#5d6779;font-size:11px;text-align:center;margin:22px 0 10px}
+  pre{background:#0a0d14;border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;
+      white-space:pre-wrap;direction:rtl;font-size:13px;max-height:440px;font-family:Vazirmatn,Tahoma,monospace}
   .ltr{direction:ltr;text-align:left;font-family:ui-monospace,monospace}
-  form.inline{display:inline}
+  .foot{color:#5d6779;font-size:11px;text-align:center;margin:20px 0 10px}
+  a{color:var(--gold)}
+  .progress{height:9px;background:#0e121b;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:12px 0 8px}
+  .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2dd4bf,#3ecf8e);
+              transition:width .5s ease}
+  .progress.indet i{width:35%;animation:slide 1.4s infinite ease-in-out}
+  @keyframes slide{0%{margin-right:-35%}100%{margin-right:100%}}
+  .kpi{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+  .kpi div{background:#0e121b;border:1px solid var(--line);border-radius:12px;padding:9px 14px;font-size:12px;color:var(--dim)}
+  .kpi b{display:block;font-size:17px;color:var(--txt)}
+  .job-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
 </style>
 </head>
 <body>
@@ -743,7 +399,7 @@ $postMax = ini_get('post_max_size');
     <div class="mark">ف</div>
     <div>
       <h1><?= h(APP_TITLE) ?></h1>
-      <div class="sub">نسخهٔ آزمایشی PHP — WAMP / XAMPP</div>
+      <div class="sub">نسخهٔ PHP — <?= h(PHP_VERSION) ?> · پردازش پس‌زمینه (بدون قفل شدن صفحه)</div>
     </div>
   </div>
 
@@ -754,9 +410,11 @@ $postMax = ini_get('post_max_size');
   <?php if (!$phpOk || !$hasCurl): ?>
     <div class="card">
       <h2>⚠️ پیش‌نیاز</h2>
-      <?php if (!$phpOk): ?><p class="muted">نسخهٔ PHP این سرور <?= h(PHP_VERSION) ?> است؛ حداقل 7.4 لازم است.</p><?php endif; ?>
+      <?php if (!$phpOk): ?>
+        <p class="muted">نسخهٔ PHP این سرور <?= h(PHP_VERSION) ?> است؛ حداقل 7.4 لازم است.</p>
+      <?php endif; ?>
       <?php if (!$hasCurl): ?>
-        <p class="muted">افزونهٔ <b class="ltr">curl</b> در PHP فعال نیست. در WAMP: آیکن سبز → PHP → php.ini →
+        <p class="muted">افزونهٔ <b class="ltr">curl</b> فعال نیست. در WAMP: آیکن → PHP → php.ini →
           خط <b class="ltr">;extension=curl</b> را به <b class="ltr">extension=curl</b> تغییر دهید و Apache را ری‌استارت کنید.</p>
       <?php endif; ?>
     </div>
@@ -768,7 +426,7 @@ $postMax = ini_get('post_max_size');
       <p class="muted">این گذرواژه فقط برای ورود به همین صفحه است تا دیگران از اعتبار شما استفاده نکنند.</p>
       <form method="post" autocomplete="off">
         <input type="hidden" name="action" value="setup_password">
-        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
         <label>گذرواژه (حداقل ۸ کاراکتر)</label>
         <input type="password" name="new_password" required minlength="8" dir="ltr">
         <label>تکرار گذرواژه</label>
@@ -782,7 +440,7 @@ $postMax = ini_get('post_max_size');
       <h2>🔑 ورود</h2>
       <form method="post" autocomplete="off">
         <input type="hidden" name="action" value="login">
-        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
         <label>گذرواژه</label>
         <input type="password" name="password" required dir="ltr" autofocus>
         <div class="row" style="margin-top:14px"><button class="primary" type="submit">ورود</button></div>
@@ -796,15 +454,14 @@ $postMax = ini_get('post_max_size');
         <span class="pill <?= $tokenSet ? 'ok' : 'bad' ?>"><?= $tokenSet ? 'ثبت‌شده' : 'ثبت نشده' ?></span>
       </h2>
       <table>
-        <tr><td>آدرس درگاه</td><td><?= gateway_url() !== '' ? 'آماده (درون برنامه)' : 'نامعتبر' ?></td></tr>
+        <tr><td>درگاه</td><td><?= gateway_url() !== '' ? 'آماده (درون برنامه)' : 'نامعتبر' ?></td></tr>
         <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= $tokenSet ? h($tokenMasked) : '—' ?></td></tr>
-        <tr><td>رمزنگاری فایل تنظیمات</td><td>خارج از web root نیست — با .htaccess مسدود شده</td></tr>
       </table>
       <form method="post" autocomplete="off" style="margin-top:12px">
         <input type="hidden" name="action" value="save_token">
-        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
         <label><?= $tokenSet ? 'جایگزینی توکن' : 'توکن را بچسبانید' ?></label>
-        <input type="text" name="token" dir="ltr" placeholder="توکن ۲۰ یا ۲۴ کاراکتری" required>
+        <input type="text" name="token" dir="ltr" placeholder="توکن API" required>
         <div class="row" style="margin-top:12px">
           <button class="primary" type="submit">ذخیره توکن</button>
           <button type="submit" name="action" value="test_credit" formnovalidate>تست اعتبار</button>
@@ -813,107 +470,342 @@ $postMax = ini_get('post_max_size');
           <?php endif; ?>
         </div>
       </form>
-      <p class="muted">پس از ذخیره، مقدار توکن قابل بازیابی نیست؛ فقط می‌توانید جایگزین کنید.</p>
     </div>
 
     <div class="card">
       <h2>📄 پردازش فایل</h2>
-      <form method="post" enctype="multipart/form-data" autocomplete="off" id="process-form">
-        <input type="hidden" name="action" value="process">
-        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+      <form id="upload-form" autocomplete="off">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
         <label>فایل (عکس، PDF یا صوتی)</label>
-        <input type="file" name="document" required accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
+        <input type="file" name="document" id="doc" required
+               accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
         <div class="row" style="margin-top:10px">
           <div>
             <label>روش تبدیل</label>
-            <select name="method">
-              <option value="4" selected>۴ — استخراج متن (OCR)</option>
-              <option value="1">۱ — حالت اول</option>
-              <option value="2">۲ — حالت دوم</option>
-              <option value="3">۳ — حالت سوم</option>
+            <select name="method" id="method">
+              <option value="4" selected>۴ — استخراج متن (پیشنهادی برای عکس/دست‌نویس)</option>
+              <option value="1">۱ — Word</option>
+              <option value="2">۲ — Word با حفظ ساختار</option>
+              <option value="3">۳ — Word (حالت سوم)</option>
             </select>
           </div>
           <div>
             <label>قالب خروجی</label>
-            <select name="output">
+            <select name="output" id="output">
               <option value="txtrawjson">متن + مختصات (JSON)</option>
-              <option value="txtraw">متن خام</option>
               <option value="txt">فقط متن</option>
-              <option value="keeplayout">حفظ چیدمان</option>
+              <option value="txtraw">متن خام</option>
+              <option value="keeplayout">حفظ چیدمان (Word)</option>
             </select>
           </div>
         </div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <input type="checkbox" name="delete_after" value="1" checked style="width:auto">
-          حذف فایل از سرور ابری پس از پردازش
+          حذف فایل از سرور ابری پس از پردازش (توصیه می‌شود)
         </label>
         <div class="row" style="margin-top:12px">
-          <button class="primary" type="submit">ارسال و خوانش</button>
+          <button class="primary" type="submit" id="go">ارسال و خوانش</button>
+          <button type="button" class="danger" id="stop" style="display:none">لغو پردازش</button>
         </div>
       </form>
-      <p class="muted">حداکثر حجم در این سرور: <b class="ltr"><?= h((string) $uploadMax) ?></b> —
-        حداکثر POST: <b class="ltr"><?= h((string) $postMax) ?></b></p>
-      <p class="muted">اگر خطای «توکن فایل برنگشت» گرفتید، صفحهٔ
-        <a href="diag.php" style="color:#d4af37">عیب‌یابی (diag.php)</a> پاسخ کامل سرور را نشان می‌دهد.</p>
+      <p class="muted">حداکثر حجم: <b class="ltr"><?= h($uploadMax) ?></b> ·
+        حداکثر POST: <b class="ltr"><?= h($postMax) ?></b> ·
+        پردازش در پس‌زمینه انجام می‌شود و صفحه قفل نمی‌شود.</p>
+
+      <div id="job" style="display:none;margin-top:16px">
+        <div class="job-row">
+          <span id="job-name" class="ltr" style="color:var(--dim)"></span>
+          <span id="job-state" class="pill wait">در صف</span>
+        </div>
+        <div class="progress" id="bar-wrap"><i id="bar"></i></div>
+        <p class="muted" id="job-msg" style="margin:0"></p>
+        <p class="muted" id="job-meta"></p>
+        <div id="result" style="display:none">
+          <div class="kpi" id="kpi"></div>
+          <pre id="text"></pre>
+          <p class="muted" id="saved" style="display:none"></p>
+        </div>
+        <div id="job-err" class="flash error" style="display:none;margin:12px 0 0"></div>
+      </div>
     </div>
 
-    <?php if ($result !== null): ?>
+    <?php if ($recent): ?>
       <div class="card">
-        <h2><?= $result['ok'] ? '✅ نتیجه' : '❌ خطا' ?></h2>
-        <?php if ($result['ok']): ?>
-          <div class="kpi">
-            <div>تعداد صفحه<b><?= (int) ($result['pages'] ?? 0) ?></b></div>
-            <div>توکن فایل<b class="ltr" style="font-size:12px"><?= h((string) ($result['file_token'] ?? '')) ?></b></div>
+        <h2>🕘 کارهای اخیر</h2>
+        <?php foreach ($recent as $r): ?>
+          <div class="job-row">
+            <span class="ltr" style="color:var(--dim)"><?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?></span>
+            <span>
+              <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
+                <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در حال پردازش')) ?>
+              </span>
+              <button class="ghost" type="button" data-job="<?= h($r['id']) ?>">نمایش</button>
+            </span>
           </div>
-          <?php if (!empty($result['saved'])): ?>
-            <p class="muted">فایل خروجی ذخیره شد:
-              <b class="ltr"><?= h((string) $result['saved']) ?></b> —
-              از پوشهٔ <b class="ltr">fk-uploads</b> بردارید.</p>
-          <?php endif; ?>
-          <pre style="margin-top:12px"><?= h((string) ($result['text'] ?? '')) ?></pre>
-        <?php else: ?>
-          <p class="muted">مرحله: <b class="ltr"><?= h((string) ($result['stage'] ?? '')) ?></b></p>
-          <div class="flash error" style="margin:0"><?= h((string) ($result['message'] ?? '')) ?></div>
-          <?php if (!empty($result['hint'])): ?>
-            <p class="muted" style="margin-top:10px">
-              🔧 <b>عیب‌یابی:</b> <?= h((string) $result['hint']) ?>
-              (<a href="diag.php" style="color:#d4af37">diag.php</a>)
-            </p>
-          <?php endif; ?>
-        <?php endif; ?>
+        <?php endforeach; ?>
+        <p class="muted"><a href="?cleanup=1">پاک کردن کارهای قدیمی</a></p>
       </div>
     <?php endif; ?>
 
-    <div class="card">
-      <h2>🖥 اطلاعات سرور</h2>
+    <div class="card" style="font-size:12px;color:var(--dim)">
+      <h2>🖥 سرور</h2>
       <table>
         <tr><td>PHP</td><td class="ltr"><?= h(PHP_VERSION) ?></td></tr>
         <tr><td>curl</td><td><?= $hasCurl ? 'فعال' : 'غیرفعال' ?></td></tr>
-        <tr><td>fileinfo</td><td><?= $hasFileinfo ? 'فعال' : 'غیرفعال' ?></td></tr>
-        <tr><td>mbstring</td><td><?= function_exists('mb_substr') ? 'فعال' : 'غیرفعال' ?></td></tr>
-        <tr><td>حداکثر آپلود</td><td class="ltr"><?= h((string) $uploadMax) ?></td></tr>
-        <tr><td>حداکثر POST</td><td class="ltr"><?= h((string) $postMax) ?></td></tr>
+        <tr><td>حداکثر آپلود</td><td class="ltr"><?= h($uploadMax) ?></td></tr>
       </table>
+      <p class="muted">
+        <a href="check.php">بررسی سرور</a> ·
+        <a href="diag.php">عیب‌یابی سرویس ابری</a>
+      </p>
+      <form method="post" style="margin-top:8px">
+        <input type="hidden" name="action" value="logout">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+        <button class="ghost" type="submit">خروج</button>
+      </form>
     </div>
-
-    <form method="post" class="inline">
-      <input type="hidden" name="action" value="logout">
-      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-      <button class="ghost" type="submit">خروج</button>
-    </form>
   <?php endif; ?>
 
   <div class="foot">
-    فاکتورخوان — نسخهٔ آزمایشی PHP · توکن هرگز در صفحه نمایش داده نمی‌شود ·
+    فاکتورخوان · توکن هرگز در صفحه نمایش داده نمی‌شود ·
     <span class="ltr"><?= h(date('Y-m-d H:i')) ?></span>
-  </div>
-  <div class="foot" style="margin-top:4px">
     <?php if (is_https()): ?>
-      ⚠️ شما با <b class="ltr">https</b> باز کرده‌اید. WAMP معمولاً SSL ندارد؛
-      آدرس را با <b class="ltr">http://</b> باز کنید.
+      <br>⚠️ با <b class="ltr">https</b> باز کرده‌اید؛ WAMP معمولاً SSL ندارد — با <b class="ltr">http://</b> باز کنید.
     <?php endif; ?>
-    <a href="check.php" style="color:#5d6779">بررسی سرور</a>
   </div>
 </div>
+
+<?php if ($logged): ?>
+<script>
+(function () {
+  "use strict";
+  var form = document.getElementById("upload-form");
+  var go = document.getElementById("go");
+  var stop = document.getElementById("stop");
+  var box = document.getElementById("job");
+  var bar = document.getElementById("bar");
+  var barWrap = document.getElementById("bar-wrap");
+  var state = document.getElementById("job-state");
+  var msg = document.getElementById("job-msg");
+  var meta = document.getElementById("job-meta");
+  var nameEl = document.getElementById("job-name");
+  var result = document.getElementById("result");
+  var textEl = document.getElementById("text");
+  var kpi = document.getElementById("kpi");
+  var savedEl = document.getElementById("saved");
+  var errBox = document.getElementById("job-err");
+  var timer = null;
+  var current = null;
+  var polls = 0;
+  var cleanedOnce = false;
+
+  function setState(label, cls) {
+    state.textContent = label;
+    state.className = "pill " + (cls || "wait");
+  }
+  function showError(text) {
+    errBox.style.display = "block";
+    errBox.textContent = text;
+  }
+  function hideError() {
+    errBox.style.display = "none";
+    errBox.textContent = "";
+  }
+  function clearTimer() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+  function reset() {
+    hideError();
+    result.style.display = "none";
+    textEl.textContent = "";
+    kpi.innerHTML = "";
+    savedEl.style.display = "none";
+    bar.style.width = "0%";
+    barWrap.className = "progress";
+    meta.textContent = "";
+  }
+
+  function paint(job) {
+    nameEl.textContent = job.name || "";
+    msg.textContent = job.message || "";
+    var p = Math.max(0, Math.min(100, job.progress || 0));
+    bar.style.width = p + "%";
+    var bits = [];
+    if (job.pages) bits.push(job.pages + " صفحه");
+    if (job.method) bits.push("روش " + job.method);
+    bits.push(p + "٪");
+    meta.textContent = bits.join(" · ");
+
+    if (job.status === "done") {
+      setState("آماده", "ok");
+      barWrap.className = "progress";
+      bar.style.width = "100%";
+      result.style.display = "block";
+      textEl.textContent = job.text || "(خروجی متنی خالی است)";
+      kpi.innerHTML = '<div>تعداد صفحه<b>' + (job.pages || 0) + "</b></div>"
+        + '<div>روش<b>' + (job.method || "-") + "</b></div>"
+        + '<div>طول متن<b>' + ((job.text || "").length) + "</b></div>";
+      if (job.saved) {
+        savedEl.style.display = "block";
+        savedEl.innerHTML = 'فایل خروجی ذخیره شد: <b class="ltr">' + job.saved + "</b> — از پوشهٔ fk-uploads بردارید.";
+      }
+      stop.style.display = "none";
+      go.disabled = false;
+      clearTimer();
+      // یک درخواست بی‌صدا تا سرور فایل را از سرویس ابری حذف کند (بدون قفل شدن صفحه)
+      if (job.cleanup && !cleanedOnce) {
+        cleanedOnce = true;
+        setTimeout(function () {
+          fetch("?api=job&id=" + encodeURIComponent(job.id) + "&_=" + Date.now(),
+                { headers: { "Accept": "application/json" }, cache: "no-store" }).catch(function () {});
+        }, 1200);
+      }
+    } else if (job.status === "failed" || job.status === "cancelled") {
+      var cancelled = job.status === "cancelled";
+      setState(cancelled ? "لغو شد" : "خطا", "bad");
+      barWrap.className = "progress";
+      if (cancelled) {
+        msg.textContent = job.message || "پردازش لغو شد.";
+        hideError();
+      } else {
+        showError((job.message || "پردازش ناموفق بود.") + (job.stage ? " (مرحله: " + job.stage + ")" : ""));
+      }
+      stop.style.display = "none";
+      go.disabled = false;
+      clearTimer();
+    } else {
+      var labels = { queued: "در صف", addfile: "ارسال فایل", convert: "شروع تبدیل",
+                     wait: "در حال پردازش", download: "دریافت خروجی" };
+      setState(labels[job.stage] || "در حال پردازش", "wait");
+      barWrap.className = "progress" + (p <= 5 ? " indet" : "");
+      stop.style.display = "inline-block";
+      go.disabled = true;
+    }
+  }
+
+  function poll(id) {
+    polls++;
+    var url = "?api=job&id=" + encodeURIComponent(id) + "&_=" + Date.now();
+    fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" })
+      .then(function (r) {
+        if (r.status === 401) { throw new Error("نشست شما منقضی شده است؛ صفحه را دوباره باز کنید."); }
+        return r.json();
+      })
+      .then(function (data) {
+        if (!data.ok) { throw new Error(data.message || "خطا در دریافت وضعیت"); }
+        paint(data.job);
+        if (data.job.status === "done" || data.job.status === "failed") { return; }
+        // با فاصلهٔ تدریجی (۳ ثانیه تا ۸ ثانیه) تا مصرف بی‌مورد کم شود
+        var delay = polls < 10 ? 3000 : (polls < 30 ? 5000 : 8000);
+        timer = setTimeout(function () { poll(id); }, delay);
+      })
+      .catch(function (err) {
+        showError(err.message || "ارتباط با سرور برقرار نشد.");
+        setState("قطع ارتباط", "bad");
+        go.disabled = false;
+        stop.style.display = "none";
+        clearTimer();
+      });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    hideError();
+    var fileInput = document.getElementById("doc");
+    if (!fileInput.files || !fileInput.files.length) {
+      showError("اول یک فایل انتخاب کنید.");
+      return;
+    }
+    var fd = new FormData();
+    fd.append("csrf", form.querySelector('[name="csrf"]').value);
+    fd.append("document", fileInput.files[0]);
+    fd.append("method", document.getElementById("method").value);
+    fd.append("output", document.getElementById("output").value);
+    if (form.querySelector('[name="delete_after"]').checked) { fd.append("delete_after", "1"); }
+
+    reset();
+    box.style.display = "block";
+    go.disabled = true;
+    setState("در حال ارسال", "wait");
+    msg.textContent = "در حال آپلود فایل…";
+    barWrap.className = "progress indet";
+    nameEl.textContent = fileInput.files[0].name;
+    stop.style.display = "none";
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", "?api=start&_=" + Date.now(), true);
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.onprogress = function (ev) {
+      if (ev.lengthComputable) {
+        var pct = Math.round(ev.loaded / ev.total * 100);
+        msg.textContent = "در حال آپلود… " + pct + "٪";
+      }
+    };
+    xhr.onload = function () {
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (err) { data = null; }
+      if (xhr.status === 401) {
+        showError("نشست شما منقضی شده است؛ صفحه را دوباره باز کنید و وارد شوید.");
+        go.disabled = false; return;
+      }
+      if (!data) {
+        showError("پاسخ سرور قابل خواندن نبود (کد " + xhr.status + "). اگر تکرار شد، صفحهٔ check.php را ببینید.");
+        setState("خطا", "bad"); go.disabled = false; return;
+      }
+      if (!data.ok) {
+        setState("خطا", "bad");
+        showError(data.message || "شروع پردازش ناموفق بود.");
+        go.disabled = false;
+        return;
+      }
+      current = data.job.id;
+      polls = 0;
+      paint(data.job);
+      poll(current);
+    };
+    xhr.onerror = function () {
+      showError("ارتباط با سرور قطع شد. اینترنت/سرور را بررسی کنید.");
+      setState("قطع ارتباط", "bad");
+      go.disabled = false;
+    };
+    xhr.send(fd);
+  });
+
+  stop.addEventListener("click", function () {
+    if (!current) { return; }
+    clearTimer();
+    stop.disabled = true;
+    fetch("?api=cancel&id=" + encodeURIComponent(current), { cache: "no-store" })
+      .catch(function () {})
+      .then(function () {
+        stop.disabled = false;
+        setState("لغو شد", "bad");
+        msg.textContent = "پردازش لغو شد و فایل از سرور ابری حذف شد.";
+        go.disabled = false;
+        stop.style.display = "none";
+      });
+  });
+
+  // نمایش کارهای قبلی
+  var buttons = document.querySelectorAll("[data-job]");
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener("click", function (e) {
+      var id = e.currentTarget.getAttribute("data-job");
+      current = id;
+      polls = 0;
+      box.style.display = "block";
+      result.style.display = "none";
+      hideError();
+      setState("در حال بررسی", "wait");
+      poll(id);
+      window.scrollTo({ top: box.offsetTop - 20, behavior: "smooth" });
+    });
+  }
+
+  // اگر صفحه بسته شد، تایمر پاک شود
+  window.addEventListener("beforeunload", clearTimer);
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>
