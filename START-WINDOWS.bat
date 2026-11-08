@@ -45,6 +45,37 @@ if errorlevel 1 goto :nopython
 for /f "tokens=2" %%v in ('%PYCMD% --version 2^>^&1') do set "PYVER=%%v"
 echo [۱/۴] پایتون سیستم: نسخه !PYVER!
 
+REM مسیر مطلق مفسر پایتون سیستم
+for /f "delims=" %%p in ('%PYCMD% -c "import sys;print(sys.executable)" 2^>nul') do set "SYSEXE=%%p"
+
+REM آیا پایتون سیستم خودش همهٔ کتابخانه‌ها را دارد؟ (نصب دستی با pip)
+set "SYSOK="
+if defined SYSEXE (
+    "!SYSEXE!" -c "import fastapi, uvicorn, sqlalchemy, cryptography, pymysql, openpyxl, pypdf, httpx" >nul 2>&1
+    if not errorlevel 1 set "SYSOK=1"
+)
+
+REM آیا محیط اجرا (venv) سالم و کامل داریم؟
+set "VENVOK="
+if exist "venv\Scripts\python.exe" (
+    venv\Scripts\python.exe -c "import fastapi, uvicorn, sqlalchemy, cryptography, pymysql, openpyxl, pypdf, httpx" >nul 2>&1
+    if not errorlevel 1 set "VENVOK=1"
+)
+
+if defined VENVOK (
+    echo [۲/۴] محیط اجرا ^(venv^) آماده است.
+    echo [۳/۴] کتابخانه‌ها آماده هستند.
+    set "PYRUN=%~dp0venv\Scripts\python.exe"
+    goto :stage4
+)
+
+if defined SYSOK (
+    echo [۲/۴] کتابخانه‌ها روی پایتون سیستم نصب هستند ^(بدون venv اجرا می‌شود^).
+    echo [۳/۴] کتابخانه‌ها آماده هستند.
+    set "PYRUN=!SYSEXE!"
+    goto :stage4
+)
+
 if not exist "venv\Scripts\python.exe" (
     echo [۲/۴] ساخت محیط اجرا ^(یک‌بار انجام می‌شود، حدود ۳۰ ثانیه^) ...
     %PYCMD% -m venv venv
