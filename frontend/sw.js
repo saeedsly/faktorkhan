@@ -1,29 +1,59 @@
-/* سرویس‌ورکر فاکتورخوان — فقط دارایی‌های ثابت کش می‌شوند */
-const CACHE = "faktorkhan-v1";
-const ASSETS = [
-  "/", "/assets/css/app.css",
-  "/assets/js/api.js", "/assets/js/ui.js", "/assets/js/views.js",
-  "/assets/js/views2.js", "/assets/js/admin.js", "/assets/js/app.js",
-  "/assets/fonts/Vazirmatn-Regular.woff2", "/assets/fonts/Vazirmatn-Bold.woff2",
-  "/assets/favicon.svg", "/manifest.webmanifest",
-];
+/* سرویس‌ورکر فاکتورخوان — استراتژی: شبکه اول، کش فقط برای آفلاین
+   هدف: بعد از هر به‌روزرسانی، مرورگر هرگز نسخهٔ قدیمیِ جاافتاده را اجرا نکند
+   (این عامل «گیر کردن صفحهٔ ورود» بعد از آپدیت است). */
+const CACHE = "faktorkhan-v2";
+const SHELL = ["/", "/assets/css/app.css", "/assets/favicon.svg", "/manifest.webmanifest"];
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
 });
+
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) =>
-    Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
 });
+
+self.addEventListener("message", (event) => {
+  if (event.data === "skip-waiting") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return;
+  const req = event.request;
+  const url = new URL(req.url);
+  if (req.method !== "GET") return;
+  if (url.origin !== self.location.origin) return;
+  /* API هرگز کش نمی‌شود */
+  if (url.pathname.startsWith("/api/")) return;
+
+  /* CSS/JS: شبکه اول، کش فقط در خطا (با هدر no-cache برای بررسی تازه بودن) */
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      fetch(req, { cache: "no-cache" })
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((hit) => hit || Response.error()))
+    );
+    return;
+  }
+
+  /* HTML/سایر: شبکه اول و در نبود شبکه، آخرین نسخهٔ ذخیره‌شده */
   event.respondWith(
-    caches.match(event.request).then((hit) => hit || fetch(event.request).then((res) => {
-      if (res.ok && (url.pathname.startsWith("/assets/") || url.pathname === "/")) {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(event.request, copy));
-      }
-      return res;
-    }).catch(() => caches.match("/")))
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(req).then((hit) => hit || caches.match("/")))
   );
 });

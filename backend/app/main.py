@@ -150,6 +150,15 @@ def api_root():
 if FRONTEND_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
+    @app.middleware("http")
+    async def asset_cache_control(request: Request, call_next):
+        """دارایی‌های ثابت هرگز از کش قدیمی سرو نشوند (بعد از آپدیت نسخه)."""
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/") or path in {"/", "/sw.js"}:
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     @app.get("/manifest.webmanifest", include_in_schema=False)
     def manifest():
         return FileResponse(FRONTEND_DIR / "manifest.webmanifest", media_type="application/manifest+json")

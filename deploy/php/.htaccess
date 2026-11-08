@@ -1,0 +1,39 @@
+# فاکتورخوان — نسخهٔ PHP
+# محافظت از فایل تنظیمات، آپلودها و لاگ‌ها در برابر دسترسی مستقیم از مرورگر.
+
+Options -Indexes
+
+# ── فایل‌های حساس هرگز سرو نشوند ──────────────────────────────
+<FilesMatch "^(fk-config\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md)$">
+    Require all denied
+</FilesMatch>
+
+# ── پوشهٔ آپلود: فقط از طریق PHP قابل خواندن باشد ─────────────
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^fk-uploads/ - [F,L]
+</IfModule>
+
+# ── هدرهای امنیتی ─────────────────────────────────────────────
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "no-referrer"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'"
+    # اگر روی HTTPS هستید این دو خط را فعال کنید:
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    # Header always set Content-Security-Policy "upgrade-insecure-requests"
+</IfModule>
+
+# ── محدودیت حجم آپلود (PHP) ────────────────────────────────────
+<IfModule mod_php.c>
+    php_value upload_max_filesize 25M
+    php_value post_max_size 27M
+    php_value max_execution_time 300
+</IfModule>
+
+# ── فشرده‌سازی ────────────────────────────────────────────────
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain application/json
+</IfModule>

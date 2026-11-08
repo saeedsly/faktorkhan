@@ -2,23 +2,33 @@
    لایه ارتباط با سرور — فاکتورخوان
    ══════════════════════════════════════════════════════════════ */
 const API = (() => {
-  /* ذخیره‌سازی امن: اگر مرورگر localStorage را مسدود کرده باشد (حالت ناشناس/IE)
-     برنامه نباید کامل از کار بیفتد. */
+  /* ذخیره‌سازی امن — سه سطح:
+       ۱) localStorage (ماندگار)
+       ۲) sessionStorage (اگر localStorage مسدود باشد — مثلاً iframe پیش‌نمایش)
+       ۳) حافظهٔ موقت (اگر هر دو مسدود باشند؛ با رفرش پاک می‌شود)
+     بدون این لایه، در برخی مرورگرها/iframeها ورود انجام می‌شود ولی نشست ذخیره
+     نمی‌شود و کاربر «در صفحهٔ ورود گیر می‌کند». */
   const store = (() => {
-    try {
-      const probe = "__fk_probe__";
-      window.localStorage.setItem(probe, "1");
-      window.localStorage.removeItem(probe);
-      return window.localStorage;
-    } catch (err) {
-      const mem = Object.create(null);
-      return {
-        getItem: (k) => (k in mem ? mem[k] : null),
-        setItem: (k, v) => { mem[k] = String(v); },
-        removeItem: (k) => { delete mem[k]; },
-      };
-    }
+    const memory = Object.create(null);
+    const memStore = {
+      getItem: (k) => (k in memory ? memory[k] : null),
+      setItem: (k, v) => { memory[k] = String(v); },
+      removeItem: (k) => { delete memory[k]; },
+    };
+    const usable = (area) => {
+      try {
+        if (!area) return false;
+        const probe = "__fk_probe__";
+        area.setItem(probe, "1");
+        area.removeItem(probe);
+        return true;
+      } catch (err) { return false; }
+    };
+    try { if (usable(window.localStorage)) return { area: window.localStorage, mode: "local" }; } catch (e) { /* ignore */ }
+    try { if (usable(window.sessionStorage)) return { area: window.sessionStorage, mode: "session" }; } catch (e) { /* ignore */ }
+    return { area: memStore, mode: "memory" };
   })();
+  const storageMode = () => store.mode;
 
   const TOKEN_KEY = "fk_token";
   const USER_KEY = "fk_user";
@@ -26,29 +36,33 @@ const API = (() => {
   const THEME_KEY = "fk_theme";
 
   function deviceId() {
-    let id = store.getItem(DEVICE_KEY);
+    let id = store.area.getItem(DEVICE_KEY);
     if (!id) {
       id = "DV-" + Array.from(crypto.getRandomValues(new Uint8Array(8)))
         .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-      store.setItem(DEVICE_KEY, id);
+      store.area.setItem(DEVICE_KEY, id);
     }
     return id;
   }
 
-  const getToken = () => store.getItem(TOKEN_KEY) || "";
-  const setToken = (t) => store.setItem(TOKEN_KEY, t || "");
+  const getToken = () => store.area.getItem(TOKEN_KEY) || "";
+  const setToken = (t) => store.area.setItem(TOKEN_KEY, t || "");
   const clearToken = () => {
-    store.removeItem(TOKEN_KEY);
-    store.removeItem(USER_KEY);
+    store.area.removeItem(TOKEN_KEY);
+    store.area.removeItem(USER_KEY);
   };
 
   const cachedUser = () => {
-    try { return JSON.parse(store.getItem(USER_KEY) || "null"); } catch { return null; }
+    try { return JSON.parse(store.area.getItem(USER_KEY) || "null"); } catch { return null; }
   };
-  const setCachedUser = (u) => store.setItem(USER_KEY, JSON.stringify(u || null));
+  const setCachedUser = (u) => store.area.setItem(USER_KEY, JSON.stringify(u || null));
 
   let onUnauthorized = () => {};
   const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
+  /** اگر token نتواند ذخیره شود، ورود ظاهراً موفق است ولی کاربر بیرون می‌ماند. */
+  const storageWarning = () => (store.mode === "memory"
+    ? "مرورگر اجازهٔ ذخیرهٔ نشست نمی‌دهد. این صفحه را در یک تب مستقیم (نه داخل iframe) باز کنید."
+    : "");
 
   async function request(path, { method = "GET", body, headers = {}, raw = false, form = false } = {}) {
     const opts = { method, headers: { ...headers } };
@@ -102,6 +116,7 @@ const API = (() => {
 
   return {
     deviceId, getToken, setToken, clearToken, cachedUser, setCachedUser, setUnauthorizedHandler,
+    storageWarning, storageMode,
     get: (p) => request(p),
     post: (p, body) => request(p, { method: "POST", body }),
     put: (p, body) => request(p, { method: "PUT", body }),

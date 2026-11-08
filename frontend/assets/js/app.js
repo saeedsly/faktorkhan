@@ -264,7 +264,9 @@ const App = (() => {
         State.user = res.user; State.sub = res.subscription;
         UI.setBusy(btn, false);
         await enterApp();
-        toast(`خوش آمدید ${res.user.full_name || ""}`, { type: "success" });
+        const warn = API.storageWarning();
+        if (warn) toast(warn, { type: "warn", title: "توجه" });
+        else toast(`خوش آمدید ${res.user.full_name || ""}`, { type: "success" });
       } catch (err) {
         UI.setBusy(btn, false);
         toast(err.message, { type: "error" });
@@ -413,7 +415,20 @@ const App = (() => {
 
     /* نسخه آفلاین */
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      navigator.serviceWorker.register("/sw.js").then((reg) => {
+        /* اگر نسخهٔ جدیدی در انتظار است، فوراً فعال شود تا کد قدیمی گیر نکند */
+        if (reg && reg.waiting) reg.waiting.postMessage("skip-waiting");
+        if (reg) {
+          reg.addEventListener("updatefound", () => {
+            const sw = reg.installing;
+            if (sw) sw.addEventListener("statechange", () => {
+              if (sw.state === "installed" && navigator.serviceWorker.controller) {
+                sw.postMessage("skip-waiting");
+              }
+            });
+          });
+        }
+      }).catch(() => {});
     }
 
     /* بازگردانی نشست */
