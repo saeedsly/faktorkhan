@@ -7,3 +7,4 @@
 *.ico binary
 *.bmp binary
 *.woff2 binary
+*.whl binary

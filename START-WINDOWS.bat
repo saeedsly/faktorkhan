@@ -33,15 +33,39 @@ if not exist "venv\Scripts\python.exe" (
 )
 
 REM ── گام ۳: نصب کتابخانه‌ها ────────────────────────────────────
-if not exist "venv\.installed" (
-    echo [۳/۴] نصب کتابخانه‌ها ^(نیاز به اینترنت، یک‌بار^) ...
-    venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-    venv\Scripts\python.exe -m pip install -r backend\requirements.txt --quiet
-    if errorlevel 1 goto :errpip
-    echo ok> "venv\.installed"
-) else (
-    echo [۳/۴] کتابخانه‌ها نصب هستند.
+set "PIPOK="
+if exist "venv\.installed" (
+    venv\Scripts\python.exe -c "import fastapi, uvicorn, sqlalchemy, cryptography" >nul 2>&1
+    if not errorlevel 1 set "PIPOK=1"
 )
+if defined PIPOK echo [۳/۴] کتابخانه‌ها از قبل نصب هستند.
+
+REM ۳-الف: نصب آفلاین از پوشه wheels (بدون اینترنت)
+if not defined PIPOK if exist "wheels\" (
+    echo [۳/۴] نصب آفلاین کتابخانه‌ها از پوشه wheels  ^(بدون نیاز به اینترنت^) ...
+    venv\Scripts\python.exe -m pip install --no-index --find-links wheels -r backend\requirements.txt --disable-pip-version-check > install-log.txt 2>&1
+    if not errorlevel 1 set "PIPOK=1"
+)
+
+REM ۳-ب: نصب آنلاین با چند منبع (اگر اینترنت در دسترس باشد)
+if not defined PIPOK (
+    echo [۳/۴] نصب کتابخانه‌ها از اینترنت  ^(یک‌بار^) ...
+    venv\Scripts\python.exe -m pip install --upgrade "pip<26" --timeout 45 --retries 1 --disable-pip-version-check > install-log.txt 2>&1
+    for %%M in ("https://pypi.org/simple" "https://mirror-pypi.runflare.com/simple" "https://pypi.tuna.tsinghua.edu.cn/simple" "https://mirrors.aliyun.com/pypi/simple" "https://mirrors.cloud.tencent.com/pypi/simple") do (
+        if not defined PIPOK (
+            echo       تلاش با %%M ...
+            venv\Scripts\python.exe -m pip install -r backend\requirements.txt -i %%M --timeout 60 --retries 1 --prefer-binary --disable-pip-version-check >> install-log.txt 2>&1
+            if not errorlevel 1 set "PIPOK=1"
+        )
+    )
+)
+
+if not defined PIPOK goto :errpip
+venv\Scripts\python.exe -c "import fastapi, uvicorn, sqlalchemy, cryptography, pymysql, openpyxl, pypdf, httpx" >nul 2>&1
+if errorlevel 1 goto :errpip
+echo ok> "venv\.installed"
+echo [۳/۴] کتابخانه‌ها آماده هستند.
+if exist "install-log.txt" del /q "install-log.txt" >nul 2>&1
 
 REM ── گام ۴: تنظیمات اولیه ──────────────────────────────────────
 if not exist ".env" (
@@ -80,7 +104,7 @@ exit /b 0
 echo [خطا] پایتون پیدا نشد.
 echo.
 echo   ۱. به نشانی زیر بروید:  https://www.python.org/downloads/windows/
-echo   ۲. نسخه 3.11 یا بالاتر را نصب کنید.
+echo   ۲. نسخه 3.12 یا 3.13 یا 3.14 را نصب کنید.
 echo   ۳. در صفحه اول نصب، تیک «Add python.exe to PATH» را بزنید.
 echo   ۴. این پنجره را ببندید و دوباره فایل را اجرا کنید.
 echo.
@@ -90,7 +114,7 @@ exit /b 1
 :errvenv
 echo.
 echo [خطا] ساخت محیط اجرا ناموفق بود.
-echo   • مطمئن شوید پایتون کامل نصب شده است ^(نسخه 3.11 یا بالاتر^).
+echo   • مطمئن شوید پایتون کامل نصب شده است ^(نسخه 3.12 یا بالاتر^).
 echo   • پوشه پروژه را در مسیری بدون فاصله و بدون حروف غیرانگلیسی بگذارید، مثل C:\faktorkhan
 echo.
 pause
@@ -98,12 +122,28 @@ exit /b 1
 
 :errpip
 echo.
-echo [خطا] نصب کتابخانه‌ها ناموفق بود.
-echo   • اتصال اینترنت را بررسی کنید.
-echo   • اگر پشت پروکسی هستید، در پنجره فرمان اجرا کنید:
-echo        set HTTP_PROXY=http://proxy:port
-echo        set HTTPS_PROXY=http://proxy:port
-echo   • سپس دوباره این فایل را اجرا کنید.
+echo ================================================================
+echo [خطا] نصب کتابخانه‌ها ناموفق بود — اینترنت به pypi.org نرسید.
+echo ================================================================
 echo.
+echo   راه حل قطعی ^(بدون اینترنت^):
+echo     ۱. فایل faktorkhan-1.0.0-WINDOWS-OFFLINE.zip را دانلود کنید.
+echo     ۲. آن را در همان مسیر پروژه ^(مثلا C:\^) از حالت فشرده خارج کنید.
+echo        پوشه wheels کنار همین فایل ساخته می‌شود.
+echo     ۳. دوباره روی START-WINDOWS.bat دوبار کلیک کنید.
+echo.
+echo   راه حل دوم ^(اینترنت با پروکسی^):
+echo     set HTTP_PROXY=http://proxy:port
+echo     set HTTPS_PROXY=http://proxy:port
+echo     سپس دوباره این فایل را اجرا کنید.
+echo.
+echo   راه حل سوم ^(منبع داخلی/آینه^):
+echo     venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+echo        -i https://mirror-pypi.runflare.com/simple --timeout 60
+echo.
+if exist "install-log.txt" (
+    echo   فایل install-log.txt برای بررسی ساخته شد ^(می‌توانید برای پشتیبانی بفرستید^).
+    echo.
+)
 pause
 exit /b 1

@@ -19,6 +19,8 @@ storage/
 !frontend/assets/fonts/*
 
 # ── خروجی ساخت ──
+wheels/
+release/
 build/
 dist/
 desktop/dist/
