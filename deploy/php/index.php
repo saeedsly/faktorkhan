@@ -72,15 +72,34 @@ function start_session(): void
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
     }
-    session_set_cookie_params(array(
-        'lifetime' => 0,
-        'path' => '/',
-        'httponly' => true,
-        'samesite' => 'Strict',
-        'secure' => is_https(),
-    ));
+    /* در ویندوز، پوشهٔ پیش‌فرض سشن (مثلاً C:\Windows\Temp) ممکن است قابل نوشتن نباشد؛
+       آن‌وقت سشن پاک می‌شود و کاربر در حلقهٔ ورود گیر می‌کند. مسیر محلی می‌گذاریم. */
+    $savePath = __DIR__ . '/fk-sessions';
+    if (!is_dir($savePath)) {
+        @mkdir($savePath, 0700, true);
+    }
+    if (is_dir($savePath) && is_writable($savePath)) {
+        @session_save_path($savePath);
+    }
+    if (@session_save_path() === '' || !is_writable(@session_save_path())) {
+        @session_save_path(sys_get_temp_dir());
+    }
+
+    $cookieOk = false;
+    if (PHP_VERSION_ID >= 70300) {
+        $cookieOk = @session_set_cookie_params(array(
+            'lifetime' => 0,
+            'path' => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+            'secure' => is_https(),
+        ));
+    }
+    if (!$cookieOk) {
+        @session_set_cookie_params(0, '/; samesite=Lax', '', is_https(), true);
+    }
     session_name('fksid');
-    session_start();
+    @session_start();
 }
 
 function csrf_token(): string
@@ -887,6 +906,13 @@ $postMax = ini_get('post_max_size');
   <div class="foot">
     فاکتورخوان — نسخهٔ آزمایشی PHP · توکن هرگز در صفحه نمایش داده نمی‌شود ·
     <span class="ltr"><?= h(date('Y-m-d H:i')) ?></span>
+  </div>
+  <div class="foot" style="margin-top:4px">
+    <?php if (is_https()): ?>
+      ⚠️ شما با <b class="ltr">https</b> باز کرده‌اید. WAMP معمولاً SSL ندارد؛
+      آدرس را با <b class="ltr">http://</b> باز کنید.
+    <?php endif; ?>
+    <a href="check.php" style="color:#5d6779">بررسی سرور</a>
   </div>
 </div>
 </body>

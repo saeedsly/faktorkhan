@@ -1,17 +1,27 @@
 # فاکتورخوان — نسخهٔ PHP
-# محافظت از فایل تنظیمات، آپلودها و لاگ‌ها در برابر دسترسی مستقیم از مرورگر.
+# سازگار با Apache 2.2 (WAMP قدیمی/ویندوز ۷) و Apache 2.4
+#
+# اگر با .htaccess خطای 500 گرفتید، این فایل را موقتاً به .htaccess.bak تغییر نام دهید؛
+# برنامه بدون آن هم کار می‌کند (فقط fk-config.json قابل دانلود می‌شود).
 
 Options -Indexes
 
 # ── فایل‌های حساس هرگز سرو نشوند ──────────────────────────────
-<FilesMatch "^(fk-config\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md|fk-diag-sample\.png)$">
-    Require all denied
+<FilesMatch "^(fk-config\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md|fk-diag-sample\.png|\.bak)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
 </FilesMatch>
 
 # ── پوشهٔ آپلود: فقط از طریق PHP قابل خواندن باشد ─────────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule ^fk-uploads/ - [F,L]
+    RewriteRule ^fk-sessions/ - [F,L]
 </IfModule>
 
 # ── هدرهای امنیتی ─────────────────────────────────────────────
@@ -20,14 +30,24 @@ Options -Indexes
     Header always set X-Frame-Options "DENY"
     Header always set Referrer-Policy "no-referrer"
     Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
-    Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'"
-    # اگر روی HTTPS هستید این دو خط را فعال کنید:
+    # Content-Security-Policy عمداً تنظیم نشده: استایل صفحه به‌صورت درون‌خطی است و
+    # برخی نسخه‌های Apache قدیمی با این هدر صفحه را سفید نشان می‌دهند.
+    # اگر روی HTTPS هستید:
     # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    # Header always set Content-Security-Policy "upgrade-insecure-requests"
 </IfModule>
 
-# ── محدودیت حجم آپلود (PHP) ────────────────────────────────────
+# ── محدودیت حجم آپلود ─────────────────────────────────────────
+<IfModule mod_php7.c>
+    php_value upload_max_filesize 25M
+    php_value post_max_size 27M
+    php_value max_execution_time 300
+</IfModule>
 <IfModule mod_php.c>
+    php_value upload_max_filesize 25M
+    php_value post_max_size 27M
+    php_value max_execution_time 300
+</IfModule>
+<IfModule mod_php8.c>
     php_value upload_max_filesize 25M
     php_value post_max_size 27M
     php_value max_execution_time 300

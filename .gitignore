@@ -32,3 +32,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+
+# ── نسخهٔ PHP ──
+deploy/php/fk-sessions/
+deploy/php/fk-config.json
+deploy/php/fk-uploads/
+deploy/php/fk-diag-sample.png
