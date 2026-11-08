@@ -69,10 +69,12 @@
 در اولین اجرا یک حساب مالک ساخته می‌شود و اطلاعات ورود آن در فایل
 `storage/OWNER-CREDENTIALS.txt` ذخیره می‌شود.
 
-**اگر مرحله نصب کتابخانه‌ها با خطای اینترنت متوقف شد** (`Read timed out` /
-`No matching distribution found`): فایل `faktorkhan-1.0.0-WINDOWS-OFFLINE.zip` را
-در همان مسیر پروژه باز کنید تا پوشه `wheels/` ساخته شود؛ اسکریپت از آن پس
-**بدون اینترنت** نصب می‌کند. جزئیات: [docs/OFFLINE-INSTALL-FA.md](docs/OFFLINE-INSTALL-FA.md)
+**اگر اینترنت ندارید یا مرحله نصب کتابخانه‌ها با خطا متوقف شد** (`Read timed out` /
+`No matching distribution found`): از **بسته کامل ویندوز**
+`faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` استفاده کنید. این بسته خودِ پایتون ۳.۱۳
+و همه کتابخانه‌ها را داخل خود دارد؛ فقط زیپ را باز کنید و
+`START-WINDOWS.bat` را اجرا کنید — نه پایتون لازم است، نه pip، نه اینترنت.
+جزئیات: [docs/OFFLINE-INSTALL-FA.md](docs/OFFLINE-INSTALL-FA.md)
 
 برای ساخت مجدد پوشه `wheels` روی هر سیستم با اینترنت سالم:
 

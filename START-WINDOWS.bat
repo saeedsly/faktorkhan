@@ -10,7 +10,29 @@ echo    پدیدآورنده: سعید سالاری
 echo ================================================================
 echo.
 
-REM ── گام ۱: بررسی نصب پایتون ───────────────────────────────────
+REM ═════════════════════════════════════════════════════════════════
+REM  حالت ۱: نسخهٔ همراه‌بسته — پوشهٔ python کنار همین فایل
+REM  در این حالت نه پایتون سیستم لازم است، نه اینترنت، نه pip.
+REM ═════════════════════════════════════════════════════════════════
+if exist "python\python.exe" (
+    for /f "tokens=2" %%v in ('python\python.exe --version 2^>^&1') do set "PYVER=%%v"
+    echo [۱/۴] پایتون همراه بسته: نسخه !PYVER!
+    echo [۲/۴] محیط اجرا همراه بسته است ^(نیازی به نصب نیست^).
+    if exist "python\Lib\site-packages\fastapi\" (
+        echo [۳/۴] کتابخانه‌ها آماده هستند.
+    ) else (
+        echo [۳/۴] نصب آفلاین کتابخانه‌ها از پوشه wheels ...
+        python\python.exe tools\install_offline.py --wheels wheels --site "python\Lib\site-packages" > install-log.txt 2>&1
+        if errorlevel 1 goto :errbundle
+        echo [۳/۴] کتابخانه‌ها نصب شدند.
+    )
+    set "PYRUN=%~dp0python\python.exe"
+    goto :stage4
+)
+
+REM ═════════════════════════════════════════════════════════════════
+REM  حالت ۲: پایتون سیستم + محیط اجرا (venv)
+REM ═════════════════════════════════════════════════════════════════
 set "PYCMD=python"
 where python >nul 2>&1
 if errorlevel 1 (
@@ -21,9 +43,8 @@ if errorlevel 1 (
 %PYCMD% -c "import sys" >nul 2>&1
 if errorlevel 1 goto :nopython
 for /f "tokens=2" %%v in ('%PYCMD% --version 2^>^&1') do set "PYVER=%%v"
-echo [۱/۴] پایتون نسخه !PYVER! پیدا شد.
+echo [۱/۴] پایتون سیستم: نسخه !PYVER!
 
-REM ── گام ۲: ساخت محیط اجرا ─────────────────────────────────────
 if not exist "venv\Scripts\python.exe" (
     echo [۲/۴] ساخت محیط اجرا ^(یک‌بار انجام می‌شود، حدود ۳۰ ثانیه^) ...
     %PYCMD% -m venv venv
@@ -32,7 +53,6 @@ if not exist "venv\Scripts\python.exe" (
     echo [۲/۴] محیط اجرا موجود است.
 )
 
-REM ── گام ۳: نصب کتابخانه‌ها ────────────────────────────────────
 set "PIPOK="
 if exist "venv\.installed" (
     venv\Scripts\python.exe -c "import fastapi, uvicorn, sqlalchemy, cryptography" >nul 2>&1
@@ -66,8 +86,9 @@ if errorlevel 1 goto :errpip
 echo ok> "venv\.installed"
 echo [۳/۴] کتابخانه‌ها آماده هستند.
 if exist "install-log.txt" del /q "install-log.txt" >nul 2>&1
+set "PYRUN=%~dp0venv\Scripts\python.exe"
 
-REM ── گام ۴: تنظیمات اولیه ──────────────────────────────────────
+:stage4
 if not exist ".env" (
     if exist "backend\.env.example" (
         copy /y "backend\.env.example" ".env" >nul
@@ -89,8 +110,10 @@ echo   برای توقف برنامه:  Ctrl + C   یا بستن این پنجر
 echo ================================================================
 echo.
 
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 cd backend
-..\venv\Scripts\python.exe run.py --host 127.0.0.1 --port 8000
+"!PYRUN!" run.py --host 127.0.0.1 --port 8000
 if errorlevel 1 (
     echo.
     echo [خطا] برنامه متوقف شد. متن خطای بالا را بررسی کنید.
@@ -100,13 +123,23 @@ if errorlevel 1 (
 )
 exit /b 0
 
-:nopython
-echo [خطا] پایتون پیدا نشد.
+:errbundle
 echo.
-echo   ۱. به نشانی زیر بروید:  https://www.python.org/downloads/windows/
-echo   ۲. نسخه 3.12 یا 3.13 یا 3.14 را نصب کنید.
-echo   ۳. در صفحه اول نصب، تیک «Add python.exe to PATH» را بزنید.
-echo   ۴. این پنجره را ببندید و دوباره فایل را اجرا کنید.
+echo [خطا] نصب آفلاین کتابخانه‌ها از پوشه wheels ناموفق بود.
+echo   متن خطا در فایل install-log.txt ذخیره شد.
+echo   معمولاً یعنی پوشه wheels ناقص کپی شده است؛ فایل زیپ بسته ویندوز را
+echo   کامل و دوباره از حالت فشرده خارج کنید.
+echo.
+pause
+exit /b 1
+
+:nopython
+echo [خطا] نه پایتون سیستم پیدا شد، نه پوشه python همراه بسته.
+echo.
+echo   ۱. اگر بسته کامل ویندوز ^(فایل PORTABLE^) را دارید، آن را کامل
+echo      از حالت فشرده خارج کنید تا پوشه python ساخته شود.
+echo   ۲. یا پایتون 3.12 / 3.13 / 3.14 را از python.org نصب کنید و در
+echo      صفحه اول نصب، تیک «Add python.exe to PATH» را بزنید.
 echo.
 pause
 exit /b 1
@@ -126,10 +159,10 @@ echo ================================================================
 echo [خطا] نصب کتابخانه‌ها ناموفق بود — اینترنت به pypi.org نرسید.
 echo ================================================================
 echo.
-echo   راه حل قطعی ^(بدون اینترنت^):
-echo     ۱. فایل faktorkhan-1.0.0-WINDOWS-OFFLINE.zip را دانلود کنید.
-echo     ۲. آن را در همان مسیر پروژه ^(مثلا C:\^) از حالت فشرده خارج کنید.
-echo        پوشه wheels کنار همین فایل ساخته می‌شود.
+echo   راه حل قطعی ^(بدون اینترنت و بدون پایتون^):
+echo     ۱. فایل بسته کامل ویندوز ^(PORTABLE^) را دانلود کنید.
+echo     ۲. آن را در همان مسیر پروژه ^(مثلا C:\^) کامل از حالت فشرده خارج کنید.
+echo        پوشه های python و wheels کنار همین فایل ساخته می‌شوند.
 echo     ۳. دوباره روی START-WINDOWS.bat دوبار کلیک کنید.
 echo.
 echo   راه حل دوم ^(اینترنت با پروکسی^):
@@ -137,7 +170,7 @@ echo     set HTTP_PROXY=http://proxy:port
 echo     set HTTPS_PROXY=http://proxy:port
 echo     سپس دوباره این فایل را اجرا کنید.
 echo.
-echo   راه حل سوم ^(منبع داخلی/آینه^):
+echo   راه حل سوم ^(منبع داخلی / آینه^):
 echo     venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 echo        -i https://mirror-pypi.runflare.com/simple --timeout 60
 echo.
