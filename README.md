@@ -57,16 +57,14 @@
 
 ### الف) اجرا روی ویندوز (ساده‌ترین راه)
 
-```bat
-:: ۱) نصب پایتون 3.11+ از python.org (گزینه Add to PATH را بزنید)
-cd faktorkhan\backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python run.py
-```
+۱. پایتون 3.11+ را از `python.org` نصب کنید (تیک **Add python.exe to PATH**).
+۲. فایل پروژه را از حالت فشرده خارج کنید.
+۳. روی فایل **`START-WINDOWS.bat`** دوبار کلیک کنید.
 
-برنامه روی `http://127.0.0.1:8000` باز می‌شود. در اولین اجرا یک حساب مالک ساخته می‌شود و
+همین. اسکریپت خودش محیط اجرا می‌سازد، کتابخانه‌ها را نصب می‌کند و برنامه را روی
+`http://127.0.0.1:8000` باز می‌کند.
+
+> راهنمای کامل و مرحله‌به‌مرحله در سه مسیر نصب: [docs/INSTALL-FA.md](docs/INSTALL-FA.md) در اولین اجرا یک حساب مالک ساخته می‌شود و
 اطلاعات ورود آن در فایل `storage/OWNER-CREDENTIALS.txt` ذخیره می‌شود.
 
 برای ساخت **نصب‌کننده ویندوز** (فایل Setup با صفحه حق معنوی):
@@ -256,6 +254,7 @@ faktorkhan/
 | فایل | موضوع |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | معماری، مدل داده، جریان درخواست، تصمیم‌های فنی |
+| [docs/INSTALL-FA.md](docs/INSTALL-FA.md) | **راهنمای ساده و مرحله‌بندی‌شده نصب (از صفر)** |
 | [docs/DEPLOY-WINDOWS-WAMP.md](docs/DEPLOY-WINDOWS-WAMP.md) | نصب روی ویندوز و WAMP گام‌به‌گام |
 | [docs/DEPLOY-SERVER-LINUX.md](docs/DEPLOY-SERVER-LINUX.md) | سرور لینوکس، Nginx، SSL، systemd |
 | [docs/OWNER-GUIDE.md](docs/OWNER-GUIDE.md) | راهنمای مالک: توکن، طرح‌ها، فروش اشتراک، پشتیبان |

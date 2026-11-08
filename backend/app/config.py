@@ -73,7 +73,8 @@ class Settings:
     DB_MAX_OVERFLOW: int = _int("DB_MAX_OVERFLOW", 20)
 
     # --- ذخیره‌سازی ---------------------------------------------------
-    DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR / "storage")))
+    # اگر DATA_DIR خالی بماند، پوشه storage در ریشه پروژه استفاده می‌شود
+    DATA_DIR: Path = Path(os.getenv("DATA_DIR", "").strip() or str(BASE_DIR / "storage"))
     MAX_UPLOAD_MB: int = _int("MAX_UPLOAD_MB", 25)
 
     # --- سرویس ابری (فقط سمت سرور) -----------------------------------
