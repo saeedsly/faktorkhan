@@ -76,6 +76,9 @@
 `START-WINDOWS.bat` را اجرا کنید — نه پایتون لازم است، نه pip، نه اینترنت.
 جزئیات: [docs/OFFLINE-INSTALL-FA.md](docs/OFFLINE-INSTALL-FA.md)
 
+بستهٔ کامل ویندوز شامل خودِ مفسر **CPython 3.13** (نسخهٔ رسمی Embedded، مجوز PSF) و
+کتابخانه‌های از پیش نصب‌شده است؛ فایل مجوز در `python/LICENSE.txt` داخل همان بسته موجود است.
+
 برای ساخت مجدد پوشه `wheels` روی هر سیستم با اینترنت سالم:
 
 ```bat
