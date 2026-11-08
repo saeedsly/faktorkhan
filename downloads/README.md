@@ -83,4 +83,4 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 |---|---|---|
 | `faktorkhan-php-htdocs.zip` | ۵۵ KB | WAMP / XAMPP — ۱۰ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۵۷۵ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۵۸۶ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
