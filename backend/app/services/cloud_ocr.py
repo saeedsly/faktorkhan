@@ -15,6 +15,7 @@ import httpx
 
 from ..config import settings
 from ..database import session_scope
+from . import gateway
 from ..models import AppSetting
 from ..security import decrypt_secret, encrypt_secret
 
@@ -79,7 +80,19 @@ def _scrub(text: str, token: str) -> str:
 
 
 def gateway_configured() -> bool:
-    return bool(settings.CLOUD_OCR_GATEWAY)
+    """درگاه همیشه در دسترس است؛ فقط در نصب ناقص false می‌شود."""
+    return gateway.gateway_configured()
+
+
+def gateway_display() -> dict:
+    """وضعیت درگاه برای پنل مدیریت — بدون افشای آدرس یا نام دامنه."""
+    url = gateway.gateway_url()
+    return {
+        "ready": gateway.gateway_configured(),
+        "custom": bool((settings.CLOUD_OCR_GATEWAY or "").strip()),
+        "secure": url.startswith("https://"),
+        "host_hint": "•••••" if url else "",
+    }
 
 
 # ------------------------------------------------------------ توکن
@@ -136,7 +149,7 @@ def _call(payload: dict[str, Any], files: dict | None = None, timeout: int | Non
     payload["token"] = token
     try:
         with httpx.Client(timeout=timeout or settings.CLOUD_OCR_TIMEOUT, verify=settings.CLOUD_OCR_VERIFY_TLS) as client:
-            response = client.post(settings.CLOUD_OCR_GATEWAY, data=payload, files=files)
+            response = client.post(gateway.gateway_url(), data=payload, files=files)
     except httpx.TimeoutException:
         raise CloudError("سرویس ابری پاسخ نداد (اتمام زمان). دوباره تلاش کنید.", "Timeout")
     except httpx.HTTPError as exc:

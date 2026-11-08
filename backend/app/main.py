@@ -45,10 +45,13 @@ async def lifespan(app: FastAPI):
             log.warning("ALLOWED_HOSTS خالی است؛ دامنه‌های مجاز را تعیین کنید تا هدر Host جعلی رد شود.")
         if not settings.FORCE_HTTPS:
             log.warning("FORCE_HTTPS خاموش است؛ اگر پشت HTTPS هستید آن را 1 کنید.")
-        if not settings.CLOUD_OCR_GATEWAY:
-            log.info("درگاه سرویس ابری تنظیم نشده است؛ فقط موتور لوکال فعال است.")
-        elif not settings.CLOUD_OCR_GATEWAY.lower().startswith("http"):
-            log.warning("CLOUD_OCR_GATEWAY باید با http:// یا https:// شروع شود.")
+        from .services import gateway as cloud_gateway
+        if not cloud_gateway.gateway_configured():
+            log.warning("آدرس درگاه سرویس ابری نامعتبر است؛ فقط موتور لوکال فعال است.")
+        elif (settings.CLOUD_OCR_GATEWAY or "").strip():
+            log.info("سرویس ابری آماده است (درگاه سفارشی از .env).")
+        else:
+            log.info("سرویس ابری آماده است (درگاه پیش‌فرض درون‌برنامه).")
     yield
 
 

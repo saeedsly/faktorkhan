@@ -46,7 +46,7 @@ sudo -u faktor nano .env
 SECRET_KEY=<python -c "import secrets;print(secrets.token_urlsafe(48))">
 ENCRYPTION_KEY=<مقدار تصادفی دیگر>
 DATABASE_URL=mysql+pymysql://faktor:رمز@127.0.0.1:3306/faktorkhan?charset=utf8mb4
-CLOUD_OCR_GATEWAY=<آدرس درگاه ابری>
+# CLOUD_OCR_GATEWAY=   ← خالی بگذارید؛ آدرس درگاه در برنامه تعبیه شده است
 OWNER_NAME=سعید سالاری
 OWNER_EMAIL=you@example.com
 OWNER_PASSWORD=<رمز قوی>

@@ -93,6 +93,16 @@ build_windows.bat
 ISCC installer\faktorkhan.iss
 ```
 
+### الف-۱) فعال کردن خوانش ابری (فقط توکن لازم است)
+
+آدرس درگاه از قبل داخل برنامه است؛ کافی است توکن را ثبت کنید:
+
+```
+SET-CLOUD-TOKEN-WINDOWS.bat        ← یا: پنل مدیریت → سرویس ابری
+```
+
+راهنمای کامل: [docs/CLOUD-OCR-FA.md](docs/CLOUD-OCR-FA.md)
+
 ### الف-۲) چند کاربر / شبکه / اینترنت (WAMP + MySQL)
 
 روی **`SETUP-MYSQL-WINDOWS.bat`** دوبار کلیک کنید (MySQL باید روشن باشد) و پرسش‌ها را
@@ -118,7 +128,8 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r backend/requirements.txt
 
 cp backend/.env.example .env
-# داخل .env این‌ها را پر کنید: SECRET_KEY، ENCRYPTION_KEY، DATABASE_URL، CLOUD_OCR_GATEWAY
+# داخل .env این‌ها را پر کنید: SECRET_KEY، ENCRYPTION_KEY، DATABASE_URL
+# (توکن سرویس ابری را در پنل مدیریت ثبت کنید — آدرس درگاه از قبل داخل برنامه است)
 
 python backend/run.py --host 0.0.0.0 --port 8000
 ```
@@ -186,7 +197,7 @@ docker compose up -d --build
 1. آدرس درگاه فقط در متغیر محیطی سرور قرار می‌گیرد:
 
    ```env
-   CLOUD_OCR_GATEWAY=<آدرس درگاه>
+   # نیازی به نوشتن آدرس درگاه نیست؛ فقط توکن را در پنل مدیریت وارد کنید
    ```
 
    این مقدار در هیچ پاسخ API برگردانده نمی‌شود و در پنل مدیریت هم نمایش داده نمی‌شود.

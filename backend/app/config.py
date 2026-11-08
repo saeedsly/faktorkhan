@@ -79,6 +79,9 @@ class Settings:
 
     # --- سرویس ابری (فقط سمت سرور) -----------------------------------
     # آدرس درگاه ابری؛ هیچ‌گاه در رابط کاربری یا پاسخ API نمایش داده نمی‌شود.
+    # آدرس درگاه سرویس ابری (اختیاری).
+    # اگر خالی بماند، `services/gateway.py` همان درگاه پیش‌فرض درون‌برنامه را استفاده
+    # می‌کند تا کاربر فقط به توکن نیاز داشته باشد. هرگز به مرورگر ارسال نمی‌شود.
     CLOUD_OCR_GATEWAY: str = os.getenv("CLOUD_OCR_GATEWAY", "").strip()
     CLOUD_OCR_TIMEOUT: int = _int("CLOUD_OCR_TIMEOUT", 180)
     CLOUD_OCR_SEED_TOKEN: str = os.getenv("CLOUD_OCR_SEED_TOKEN", "").strip()
@@ -189,6 +192,7 @@ def app_meta() -> dict:
         "license_required": settings.REQUIRE_LICENSE,
         "trial_days": settings.TRIAL_DAYS,
         "trial_pages": settings.TRIAL_PAGES,
-        "cloud_configured": bool(settings.CLOUD_OCR_GATEWAY),
+        # درگاه پیش‌فرض درون برنامه همیشه در دسترس است؛ برای استفاده واقعی فقط توکن لازم است.
+        "cloud_configured": True,
         "max_upload_mb": settings.MAX_UPLOAD_MB,
     }

@@ -75,12 +75,15 @@ def decrypt_secret(cipher: str) -> str:
 
 
 def mask_secret(value: str, visible: int = 4) -> str:
-    """نمایش امن توکن: فقط چند کاراکتر آخر."""
+    """نمایش امن توکن: فقط چند کاراکتر آخر.
+
+    هرگز ابتدای توکن نمایش داده نمی‌شود؛ اگر توکن کوتاه باشد کاملاً پوشانده می‌شود.
+    """
     if not value:
         return ""
-    if len(value) <= visible * 2:
+    if len(value) <= visible * 3:
         return "•" * 12
-    return f"{value[:visible]}{'•' * 12}{value[-visible:]}"
+    return f"{'•' * 12}{value[-visible:]}"
 
 
 def fingerprint(value: str) -> str:

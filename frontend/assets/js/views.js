@@ -222,8 +222,9 @@ const Views = (() => {
               <div class="engine-grid">
                 <button class="engine ${draft.engine === "cloud" ? "active" : ""}" data-engine="cloud" ${cloudReady ? "" : "disabled"}>
                   <div class="e-top"><svg class="ic"><use href="#i-cloud"/></svg>سرویس ابری
-                    <span class="e-badge">${cloudReady ? "آماده" : "تنظیم نشده"}</span></div>
-                  <small>دقت بالا برای دست‌نویس، حرارتی و اسناد تصویری. متن از درگاه امن سرور عبور می‌کند.</small>
+                    <span class="e-badge">${cloudReady ? "آماده" : "نیازمند توکن"}</span></div>
+                  <small>${cloudReady ? "دقت بالا برای دست‌نویس، حرارتی و اسناد تصویری. متن از درگاه امن سرور عبور می‌کند."
+                    : "دقت بالا برای دست‌نویس و حرارتی. برای فعال‌سازی، توکن را در «پنل مدیریت → سرویس ابری» ثبت کنید."}</small>
                 </button>
                 <button class="engine ${draft.engine === "local" ? "active" : ""}" data-engine="local" ${localReady ? "" : "disabled"}>
                   <div class="e-top"><svg class="ic"><use href="#i-cpu"/></svg>موتور لوکال

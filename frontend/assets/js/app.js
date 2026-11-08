@@ -73,7 +73,7 @@ const App = (() => {
       if (!State.caps) State.caps = await API.ocrCapabilities();
       if (!State.caps.cloud.configured) {
         pill.innerHTML = `<svg class="ic"><use href="#i-cpu"/></svg><span>موتور لوکال</span>`;
-        pill.title = "سرویس ابری پیکربندی نشده است";
+        pill.title = "سرویس ابری فعال نیست؛ توکن را در پنل مدیریت → سرویس ابری ثبت کنید";
         return;
       }
       const res = await API.ocrCredit();
