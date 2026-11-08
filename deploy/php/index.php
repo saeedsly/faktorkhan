@@ -60,7 +60,7 @@ if ($api !== '') {
             json_out(array('ok' => false, 'error' => 'notfound', 'message' => 'این کار پیدا نشد.'), 404);
         }
         $freeSession();
-        $terminal = in_array($job['status'], array('done', 'failed', 'cancelled'), true);
+        $terminal = job_is_terminal($job);
         if (!$terminal || !empty($job['cleanup_pending'])) {
             $job = job_tick($job);   // یک قدم کوتاه (حداکثر یک فراخوانی درگاه)
         }
@@ -76,6 +76,9 @@ if ($api !== '') {
                 'pages' => (int) ($job['pages'] ?? 0),
                 'saved' => (string) ($job['saved'] ?? ''),
                 'cleanup' => !empty($job['cleanup_pending']),
+                'real_progress' => !empty($job['real_progress']),
+                'slow' => !empty($job['slow']),
+                'wait_seconds' => (int) ($job['wait_seconds'] ?? 0),
                 'method' => (int) ($job['method'] ?? 0),
                 'name' => (string) ($job['name'] ?? ''),
                 'age' => time() - (int) ($job['created_at'] ?? time()),
@@ -144,7 +147,7 @@ if ($api !== '') {
         }
 
         $method = max(1, min(4, (int) ($_POST['method'] ?? 4)));
-        $output = (string) ($_POST['output'] ?? 'txtrawjson');
+        $output = (string) ($_POST['output'] ?? 'txt');
         $deleteAfter = !empty($_POST['delete_after']);
 
         /* فایل را روی همین سرور نگه می‌داریم؛ ارسال به سرویس ابری در
@@ -492,11 +495,15 @@ if ($logged) {
           <div>
             <label>قالب خروجی</label>
             <select name="output" id="output">
-              <option value="txtrawjson">متن + مختصات (JSON)</option>
-              <option value="txt">فقط متن</option>
-              <option value="txtraw">متن خام</option>
-              <option value="keeplayout">حفظ چیدمان (Word)</option>
+              <option value="txt" selected>متن ساده — سریع‌ترین ⚡</option>
+              <option value="txtraw">متن خام — سریع</option>
+              <option value="keeplayout">Word با چیدمان — کندتر</option>
+              <option value="txtrawjson">متن + مختصات (JSON) — کندترین</option>
             </select>
+            <p class="muted" style="margin:6px 0 0;font-size:11px">
+              «مختصات» موقعیت هر کلمه را هم می‌فرستد و چند برابر کندتر است؛
+              برای فاکتور معمولی لازم نیست.
+            </p>
           </div>
         </div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
@@ -520,6 +527,9 @@ if ($logged) {
         <div class="progress" id="bar-wrap"><i id="bar"></i></div>
         <p class="muted" id="job-msg" style="margin:0"></p>
         <p class="muted" id="job-meta"></p>
+        <p class="muted" id="job-elapsed" style="margin:0;font-size:12px">
+          زمان سپری‌شده: <b class="ltr" id="job-clock">۰</b>
+        </p>
         <div id="result" style="display:none">
           <div class="kpi" id="kpi"></div>
           <pre id="text"></pre>
@@ -598,6 +608,9 @@ if ($logged) {
   var current = null;
   var polls = 0;
   var cleanedOnce = false;
+  var lastStage = null;
+  var tick = null;
+  var startedAt = 0;
 
   function setState(label, cls) {
     state.textContent = label;
@@ -613,6 +626,7 @@ if ($logged) {
   }
   function clearTimer() {
     if (timer) { clearTimeout(timer); timer = null; }
+    stopTicker();
   }
   function reset() {
     hideError();
@@ -652,6 +666,7 @@ if ($logged) {
       stop.style.display = "none";
       go.disabled = false;
       clearTimer();
+      stopTicker();
       // یک درخواست بی‌صدا تا سرور فایل را از سرویس ابری حذف کند (بدون قفل شدن صفحه)
       if (job.cleanup && !cleanedOnce) {
         cleanedOnce = true;
@@ -673,14 +688,43 @@ if ($logged) {
       stop.style.display = "none";
       go.disabled = false;
       clearTimer();
+      stopTicker();
     } else {
       var labels = { queued: "در صف", addfile: "ارسال فایل", convert: "شروع تبدیل",
                      wait: "در حال پردازش", download: "دریافت خروجی" };
       setState(labels[job.stage] || "در حال پردازش", "wait");
-      barWrap.className = "progress" + (p <= 5 ? " indet" : "");
+
+      // فقط وقتی سرویس درصد واقعی می‌دهد نوار را پر کن؛
+      // وگرنه نوار متحرک (indeterminate) + زمان‌سنج واقعی نشان بده
+      // تا کاربر فکر نکند روی یک عدد ساختگی گیر کرده است.
+      var waiting = job.stage === "wait" && !job.real_progress;
+      if (waiting) {
+        barWrap.className = "progress indet";
+        bar.style.width = "35%";
+      } else {
+        barWrap.className = "progress";
+        bar.style.width = p + "%";
+      }
+      if (job.slow) {
+        setState("کندتر از معمول", "bad");
+      }
       stop.style.display = "inline-block";
       go.disabled = true;
     }
+  }
+
+  function startTicker() {
+    if (tick) { clearInterval(tick); }
+    startedAt = Date.now();
+    tick = setInterval(function () {
+      var el = document.getElementById("job-clock");
+      if (!el) { return; }
+      var sec = Math.floor((Date.now() - startedAt) / 1000);
+      el.textContent = sec < 60 ? (sec + " ثانیه") : (Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2));
+    }, 1000);
+  }
+  function stopTicker() {
+    if (tick) { clearInterval(tick); tick = null; }
   }
 
   function poll(id) {
@@ -693,10 +737,31 @@ if ($logged) {
       })
       .then(function (data) {
         if (!data.ok) { throw new Error(data.message || "خطا در دریافت وضعیت"); }
+        var elapsed = (data.job && data.job.age) || 0;
+        var prevStage = lastStage;
+        lastStage = data.job.stage;
         paint(data.job);
-        if (data.job.status === "done" || data.job.status === "failed") { return; }
-        // با فاصلهٔ تدریجی (۳ ثانیه تا ۸ ثانیه) تا مصرف بی‌مورد کم شود
-        var delay = polls < 10 ? 3000 : (polls < 30 ? 5000 : 8000);
+        if (data.job.status === "done" || data.job.status === "failed"
+            || data.job.status === "cancelled") { return; }
+
+        // مراحل «ارسال / تبدیل» فقط چند ثانیه‌اند: بی‌درنگ مرحلهٔ بعد را بفرست
+        // تا هیچ ثانیه‌ای بین مراحل تلف نشود. برای «در حال پردازش» فاصله طبیعی است.
+        var delay;
+        var quick = data.job.stage === "addfile" || data.job.stage === "convert"
+                 || data.job.stage === "download" || data.job.stage === "queued";
+        if (prevStage !== data.job.stage && quick) {
+          delay = 120;                          // تغییر مرحله → فوری (بدون ثانیهٔ مرده)
+        } else if (quick) {
+          delay = 800;                          // همان مرحلهٔ کوتاه → سریع دوباره
+        } else if (data.job.stage === "wait" && !data.job.real_progress && elapsed < 120) {
+          delay = 1500;                         // ۲ دقیقهٔ اول: هر ۱.۵ ثانیه بپرس
+        } else if (data.job.progress > 0 && data.job.progress < 99 && data.job.real_progress) {
+          delay = 2000;                         // سرویس درصد می‌دهد → هر ۲ ثانیه
+        } else if (elapsed < 600) {
+          delay = 3000;                         // انتظار متوسط
+        } else {
+          delay = 5000;                         // انتظار طولانی → کمتر مزاحم شو
+        }
         timer = setTimeout(function () { poll(id); }, delay);
       })
       .catch(function (err) {
@@ -760,6 +825,7 @@ if ($logged) {
       }
       current = data.job.id;
       polls = 0;
+      startTicker();
       paint(data.job);
       poll(current);
     };

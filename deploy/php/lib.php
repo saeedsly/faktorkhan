@@ -231,18 +231,40 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
     }
 
     $ch = curl_init();
-    curl_setopt_array($ch, array(
-        CURLOPT_URL => $url,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => $timeout,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_SSL_VERIFYPEER => $verify,
-        CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_USERAGENT => 'FactorKhan-PHP/1.1',
-    ));
+
+    /*
+     * همهٔ گزینه‌ها با نام رشته‌ای تنظیم می‌شوند تا روی نسخه‌های قدیمی
+     * PHP/curl (ویندوز ۷) هیچ ثابتی تعریف‌نشده باعث خطای مرگبار نشود.
+     */
+    $opts = array(
+        'URL' => $url,
+        'POST' => true,
+        'POSTFIELDS' => $payload,
+        'RETURNTRANSFER' => true,
+        'TIMEOUT' => $timeout,
+        'CONNECTTIMEOUT' => 10,
+        'SSL_VERIFYPEER' => $verify,
+        'SSL_VERIFYHOST' => $verify ? 2 : 0,
+        'FOLLOWLOCATION' => false,
+        'USERAGENT' => 'FactorKhan-PHP/1.2',
+        /* اتصال را بازاستفاده کن */
+        'FRESH_CONNECT' => false,
+        'FORBID_REUSE' => false,
+        /* بدون انتظار «Expect: 100-continue» (تا ۱ ثانیه صرفه‌جویی در هر تماس) */
+        'HTTPHEADER' => array('Expect:'),
+        /* کش DNS تا هر تماس دوباره نام را resolve نکند */
+        'DNS_CACHE_TIMEOUT' => 300,
+    );
+    foreach ($opts as $name => $value) {
+        $const = 'CURLOPT_' . $name;
+        if (defined($const)) {
+            @curl_setopt($ch, constant($const), $value);
+        }
+    }
+    /* فقط اگر curl واقعاً پشتیبانی کند */
+    if (defined('CURLOPT_TCP_FASTOPEN')) {
+        @curl_setopt($ch, CURLOPT_TCP_FASTOPEN, true);
+    }
     if (!class_exists('CURLFile') && defined('CURLOPT_SAFE_UPLOAD')) {
         curl_setopt($ch, CURLOPT_SAFE_UPLOAD, false);
     }
@@ -324,17 +346,26 @@ function download_output(string $url): array
         return array('ok' => false, 'body' => '', 'suffix' => '', 'message' => 'افزونهٔ curl فعال نیست.');
     }
     $ch = curl_init();
-    curl_setopt_array($ch, array(
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => (int) ($cfg['timeout'] ?? 180),
-        CURLOPT_CONNECTTIMEOUT => 20,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 3,
-        CURLOPT_SSL_VERIFYPEER => $verify,
-        CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
-        CURLOPT_USERAGENT => 'FactorKhan-PHP/1.1',
-    ));
+    $opts = array(
+        'URL' => $url,
+        'RETURNTRANSFER' => true,
+        'TIMEOUT' => (int) ($cfg['timeout'] ?? 180),
+        'CONNECTTIMEOUT' => 15,
+        'FOLLOWLOCATION' => true,
+        'MAXREDIRS' => 3,
+        'SSL_VERIFYPEER' => $verify,
+        'SSL_VERIFYHOST' => $verify ? 2 : 0,
+        'USERAGENT' => 'FactorKhan-PHP/1.2',
+        'FRESH_CONNECT' => false,
+        'HTTPHEADER' => array('Expect:'),
+        'DNS_CACHE_TIMEOUT' => 300,
+    );
+    foreach ($opts as $name => $value) {
+        $const = 'CURLOPT_' . $name;
+        if (defined($const)) {
+            @curl_setopt($ch, constant($const), $value);
+        }
+    }
     $body = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
@@ -517,25 +548,51 @@ function job_drop_local(array $job): void
 }
 
 /**
- * یک قدم پیش بردن کار.
- * قاعدهٔ طلایی: در هر فراخوانی حداکثر *یک* درخواست به سرویس ابری زده می‌شود.
- * بنابراین هر پاسخ HTTP کوتاه است و صفحه هرگز قفل نمی‌شود.
+ * نمایش کوتاه مدت زمان به فارسی: «۴۲ ثانیه» / «۲ دقیقه و ۵ ثانیه»
  */
-function job_tick(array $job): array
+function self_duration(int $seconds): string
 {
+    if ($seconds < 60) {
+        return max(1, $seconds) . ' ثانیه';
+    }
+    $m = intdiv($seconds, 60);
+    $s = $seconds % 60;
+    return $s === 0 ? $m . ' دقیقه' : $m . ' دقیقه و ' . $s . ' ثانیه';
+}
+
+/**
+ * یک قدم پیش بردن کار.
+ *
+ * قاعدهٔ زمان‌بندی (مهم برای سرعت):
+ *   • مراحل کوتاه (addfile و convert) در *همان* درخواست پشت سر هم انجام
+ *     می‌شوند؛ هر کدام ۱ تا ۵ ثانیه‌اند و مجموعشان صفحه را قفل نمی‌کند،
+ *     ولی حذف رفت‌وبرگشت مرورگر ۲ تا ۳ ثانیه صرفه‌جویی می‌کند.
+ *   • checkconvert (که ممکن است دقایق طول بکشد) هرگز تکرار نمی‌شود؛
+ *     هر بار فقط یک بار پرسیده می‌شود تا پاسخ کوتاه بماند.
+ *
+ * @param array $job    پروندهٔ کار
+ * @param int   $budget حداکثر ثانیهٔ مجاز برای این درخواست (پیش‌فرض ۲۵)
+ */
+function job_tick(array $job, int $budget = 25): array
+{
+    $deadline = microtime(true) + max(5, $budget);
     /* پاک‌سازی معوق روی سرویس ابری: یک درخواست جداگانه، تا هیچ درخواستی
        دو فراخوانی درگاه نداشته باشد. */
     if (!empty($job['cleanup_pending']) && empty($job['cleaned'])) {
+        $job['message'] = 'در حال پاک‌کردن فایل از سرویس ابری…';
+        $job['real_progress'] = false;
+        job_save($job);
         if (!empty($job['file_token'])) {
             call_gateway(array('command' => 'deletefile', 'filetoken' => (string) $job['file_token']), null, null, '', 12);
         }
         $job['cleaned'] = true;
         $job['cleanup_pending'] = false;
+        $job['message'] = 'تبدیل کامل شد.';
         job_save($job);
         return $job;
     }
 
-    if (in_array($job['status'], array('done', 'failed', 'cancelled'), true)) {
+    if (job_is_terminal($job)) {
         return $job;
     }
 
@@ -607,10 +664,17 @@ function job_tick(array $job): array
         $useMethod = pick_method((int) ($job['method'] ?? 4), $job['remote_methods'], $ext);
         $job['method'] = $useMethod;
         $job['stage'] = 'convert';
+        $job['status'] = 'converting';
         $job['progress'] = 20;
         $job['message'] = 'فایل ثبت شد (' . $job['pages'] . ' صفحه) — شروع تبدیل با روش ' . $useMethod . '…';
         job_save($job);
-        return $job;    // همین‌جا تمام؛ درخواست بعدی convert را می‌فرستد
+
+        /* مرحلهٔ convert هم کوتاه است؛ همان‌جا انجامش بده تا رفت‌وبرگشت
+           اضافی مرورگر حذف شود (۲ تا ۳ ثانیه صرفه‌جویی). */
+        if (microtime(true) < $deadline) {
+            $job = job_tick($job, max(5, (int) ($deadline - microtime(true))));
+        }
+        return $job;
     }
 
     $fileToken = (string) ($job['file_token'] ?? '');
@@ -654,9 +718,15 @@ function job_tick(array $job): array
         $download = trim((string) ($conv['data']['FileToDownload'] ?? ''));
         $job['download'] = $download;
         $job['stage'] = 'wait';
+        $job['status'] = 'converting';
         $job['progress'] = 32;
+        $job['started_wait'] = time();
         $job['message'] = 'در حال پردازش روی سرور ابری…';
         job_save($job);
+
+        /* عمداً checkconvert را همین‌جا صدا نمی‌زنیم:
+           کاربر باید بلافاصله ببیند «تبدیل شروع شد» و درصد واقعی را ببیند.
+           زنجیره فقط برای دو مرحلهٔ قطعاً کوتاه (addfile → convert) است. */
         return $job;
     }
 
@@ -706,14 +776,34 @@ function job_tick(array $job): array
 
         if ($done) {
             $job['stage'] = 'download';
+            $job['status'] = 'processing';
             $job['progress'] = 92;
             $job['message'] = 'تبدیل تمام شد؛ آماده‌سازی خروجی…';
             job_save($job);
             return $job;
         }
 
-        $job['progress'] = max(32, min($progress > 0 ? $progress : (int) $job['progress'] + 3, 97));
-        $job['message'] = 'در حال پردازش… ' . $job['progress'] . '٪';
+        if ($progress > 0) {
+            /* درصد واقعی سرویس را نشان بده؛ سقف مصنوعی لازم نیست */
+            $job['progress'] = max(32, min($progress, 99));
+            $job['real_progress'] = true;
+            $job['message'] = 'در حال پردازش… ' . $job['progress'] . '٪';
+        } else {
+            /* سرویس درصد نمی‌دهد → عدد ساختگی نشان نده؛ زمان‌سنج واقعی بده */
+            $elapsed = time() - (int) ($job['started_wait'] ?? time());
+            $job['progress'] = max(32, (int) $job['progress']);
+            /* این تیک درصد واقعی نداشت → نوار باید حالت «در جریان» بگیرد */
+            $job['real_progress'] = false;
+            $job['wait_seconds'] = $elapsed;
+            if ($elapsed > 420) {
+                /* بیش از ۷ دقیقه بدون هیچ درصدی: صریح بگو، نه اینکه بی‌صدا بچرخد */
+                $job['message'] = 'سرویس ابری بیش از ' . self_duration($elapsed) . ' است پاسخ آماده نداده. '
+                    . 'ممکن است صف سرویس شلوغ باشد. می‌توانید صبر کنید یا با «لغو پردازش» متوقف کنید.';
+                $job['slow'] = true;
+            } else {
+                $job['message'] = 'در حال پردازش روی سرویس ابری… ' . self_duration($elapsed);
+            }
+        }
         job_save($job);
         return $job;
     }
@@ -754,6 +844,19 @@ function job_tick(array $job): array
     $job['stage'] = 'wait';
     job_save($job);
     return $job;
+}
+
+/**
+ * آیا کار به پایان رسیده است؟
+ * فقط بر اساس stage قضاوت می‌کنیم چون status در طول مسیر «converting»
+ * می‌ماند و ممکن است با stage ناهمخوان باشد.
+ */
+function job_is_terminal(array $job): bool
+{
+    if (in_array((string) ($job['stage'] ?? ''), array('done', 'cancelled'), true)) {
+        return true;
+    }
+    return in_array((string) ($job['status'] ?? ''), array('done', 'failed', 'cancelled'), true);
 }
 
 /** پایان موفق کار + پاک‌سازی فایل روی سرویس ابری */
