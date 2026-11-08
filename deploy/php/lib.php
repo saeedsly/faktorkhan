@@ -322,15 +322,60 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
         'UnkwonURL' => 'لینک ارسالی معتبر نیست.',
         'UnknowURL' => 'لینک ارسالی معتبر نیست.',
         'UnknowMethod' => 'روش تبدیل نامعتبر است.',
+        '404' => 'اطلاعات ارسالی سرویس ابری درست نبود (کد ۴۰۴).',
+        '500' => 'خطای داخلی سرویس ابری (کد ۵۰۰) — گاهی با تلاش دوباره حل می‌شود.',
     );
     if (isset($errors[$st])) {
         return array('ok' => false, 'data' => $data, 'message' => $errors[$st], 'code' => $st);
+    }
+    /*
+     * «Data Not Found Yet» در مستندات جزو خطاها فهرست شده، ولی در عمل یعنی
+     * «هنوز آماده نیست». اگر آن را خطای قطعی بگیریم، کارِ در حال پردازش
+     * بی‌دلیل می‌میرد و توکن مصرف‌شده هدر می‌رود.
+     */
+    if (stripos($st, 'not found') !== false || stripos($st, 'notfound') !== false) {
+        return array('ok' => true, 'data' => $data, 'message' => '', 'code' => 'NotReady');
     }
     if (strtolower($st) === 'error' || strtolower($st) === 'failed') {
         return array('ok' => false, 'data' => $data,
             'message' => scrub((string) ($data['Message'] ?? 'خطای نامشخص'), $token), 'code' => 'Error');
     }
     return array('ok' => true, 'data' => $data, 'message' => '', 'code' => $st);
+}
+
+/**
+ * خواندن یک کلید از پاسخ JSON با تحمل نویسه‌های اضافی.
+ * سرویس واقعی کلید را با فاصله برمی‌گرداند:  " FileToDownload "
+ * (در مستندات هم با فاصله آمده) — تطبیق دقیق شکست می‌خورد.
+ */
+function pick_key(array $data, array $candidates): string
+{
+    /* ۱) تطبیق دقیق */
+    foreach ($candidates as $k) {
+        if (isset($data[$k]) && is_scalar($data[$k])) {
+            $v = trim((string) $data[$k]);
+            if ($v !== '') {
+                return $v;
+            }
+        }
+    }
+    /* ۲) تطبیق نرم: فاصله/زیرخط/حروف بزرگ را نادیده بگیر */
+    $norm = static function (string $s): string {
+        return strtolower(preg_replace('/[\s_\-]/', '', $s));
+    };
+    $wanted = array_map($norm, $candidates);
+    foreach ($data as $k => $v) {
+        if (!is_scalar($v)) {
+            continue;
+        }
+        if (in_array($norm((string) $k), $wanted, true)) {
+            $s = trim((string) $v);
+            if ($s !== '') {
+                return $s;
+            }
+        }
+    }
+    return '';
 }
 
 function find_file_token(array $data): string
@@ -735,8 +780,27 @@ function job_tick(array $job, int $budget = 25): array
             return $job;
         }
 
-        $download = trim((string) ($conv['data']['FileToDownload'] ?? ''));
+        /*
+         * طبق قرارداد سرویس:
+         *   • عکس و PDF → خودِ convert لینک فایل خروجی را برمی‌گرداند
+         *     (کلید در پاسخ با فاصله است: " FileToDownload ")
+         *   • فقط فایل صوتی نیاز به checkconvert دارد
+         * پس اگر لینک آمد، بی‌درنگ به مرحلهٔ دانلود برو؛ منتظر ماندن
+         * روی checkconvert فقط وقت و اعتبار تلف می‌کند.
+         */
+        $download = pick_key($conv['data'], array('FileToDownload', 'FileToDownloadUrl', 'DownloadUrl', 'OutputFile'));
         $job['download'] = $download;
+
+        if ($download !== '') {
+            $job['stage'] = 'download';
+            $job['status'] = 'processing';
+            $job['progress'] = 90;
+            $job['message'] = 'تبدیل انجام شد؛ دریافت فایل خروجی…';
+            job_save($job);
+            return $job;
+        }
+
+        /* لینکی نیامد → این فایل باید با checkconvert دنبال شود (صوتی یا صف) */
         $job['stage'] = 'wait';
         $job['status'] = 'converting';
         $job['progress'] = 32;
@@ -768,19 +832,51 @@ function job_tick(array $job, int $budget = 25): array
 
         $d = $chk['data'];
         $st = strtolower(trim((string) ($d['Status'] ?? '')));
+
         $progress = 0;
         if (preg_match('/(\d+(?:\.\d+)?)/', (string) ($d['Progress'] ?? ''), $m)) {
             $progress = (int) round((float) $m[1]);
         }
-        $candidate = (string) ($d['Output'] ?? '');
+
+        /* متن خروجی — کلید ممکن است «Output» یا با فاصله باشد */
+        $candidate = pick_key($d, array('Output', 'Text', 'Result'));
         $text = '';
-        if ($candidate !== '' && !preg_match('/^\s*[\[{]/', $candidate)) {
-            $decoded = base64_decode($candidate, true);
-            $text = ($decoded !== false && $decoded !== '') ? $decoded : $candidate;
+
+        if ($candidate !== '') {
+            /* اگر پاسخ سرویس خودش یک JSON تودرتو بود، آن را به‌عنوان «متن» نگیر */
+            $isJson = preg_match('/^\s*[\[{]/', $candidate)
+                && json_decode($candidate, true) !== null;
+            if (!$isJson) {
+                $decoded = base64_decode($candidate, true);
+                /* base64 معتبر فقط اگر خروجی، متن چاپ‌شدنی باشد */
+                $looksBase64 = $decoded !== false
+                    && $decoded !== ''
+                    && preg_match('/^[\x20-\x7E\r\n\t\x{0600}-\x{06FF}]+$/u', $decoded);
+                $text = $looksBase64 ? $decoded : $candidate;
+            }
         }
 
+        /*
+         * «Data Not Found Yet» یک خطا نیست؛ یعنی هنوز خروجی آماده نشده.
+         * در مستندات سرویس جزو فهرست خطاها آمده ولی رفتارش «در انتظار» است.
+         */
+        $notReady = stripos((string) ($d['Status'] ?? ''), 'not found') !== false
+            || stripos((string) ($d['Status'] ?? ''), 'notfound') !== false;
+
         $done = in_array($st, array('done', 'success', 'finished', 'completed'), true);
-        $failed = in_array($st, array('error', 'failed', 'convertterminated', 'notfound'), true);
+        $failed = in_array($st, array('error', 'failed', 'convertterminated'), true);
+
+        /* اگر متن آمده، حتی با وضعیت Converting هم قبولش کن:
+           سرویس متن را تدریجی می‌فرستد و منتظر ماندن فقط وقت تلف می‌کند. */
+        if ($text !== '') {
+            return job_finish_text($job, $text);
+        }
+
+        if ($notReady) {
+            $job['message'] = 'سرویس هنوز خروجی را آماده نکرده؛ ادامهٔ انتظار…';
+            job_save($job);
+            return $job;
+        }
 
         if ($failed) {
             $job['status'] = 'failed';
@@ -790,15 +886,22 @@ function job_tick(array $job, int $budget = 25): array
             return $job;
         }
 
-        if ($text !== '' && ($done || $progress >= 100)) {
-            return job_finish_text($job, $text);
-        }
-
         if ($done) {
-            $job['stage'] = 'download';
-            $job['status'] = 'processing';
-            $job['progress'] = 92;
-            $job['message'] = 'تبدیل تمام شد؛ آماده‌سازی خروجی…';
+            /* convert تمام شده ولی نه متن آمد نه لینک:
+               یا خروجی فایل است (Word) یا سرویس لینک را در این پاسخ نداد.
+               اگر لینک داریم برو دانلود، وگرنه صریح شکست بده —
+               چرخیدن بی‌پایان روی «۹۲٪» بدترین حالت است. */
+            if (trim((string) ($job['download'] ?? '')) !== '') {
+                $job['stage'] = 'download';
+                $job['status'] = 'processing';
+                $job['progress'] = 92;
+                $job['message'] = 'تبدیل تمام شد؛ آماده‌سازی خروجی…';
+            } else {
+                $job['status'] = 'failed';
+                $job['stage'] = 'convert';
+                $job['message'] = 'سرویس ابری «تمام شد» گفت ولی نه متنی فرستاد نه لینک فایلی. '
+                    . 'یک بار دیگر امتحان کنید؛ اگر تکرار شد، در diag.php پاسخ خام را ببینید.';
+            }
             job_save($job);
             return $job;
         }

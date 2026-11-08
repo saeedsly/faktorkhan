@@ -185,6 +185,76 @@ if ($run && $token !== '' && $url !== '') {
 
     // ۲-د: بدون MIME (نوع خودکار)
     $results['add_nomime'] = raw_call(array('command' => 'addfile'), 'filehandle', $png, $sampleName, '');
+
+    /*
+     * ۳) مسیر کامل واقعی: addfile → convert → دانلود
+     * این تنها راه فهمیدن این است که خروجی کجا گم می‌شود.
+     */
+    $ft = '';
+    if ($results['add_realname']['json_ok']) {
+        $j = json_decode((string) ($results['add_realname']['body_raw'] ?? ''), true);
+        if (is_array($j)) {
+            foreach ($j as $k => $v) {
+                if (stripos((string) $k, 'filetoken') !== false && is_scalar($v)) {
+                    $ft = trim((string) $v);
+                    break;
+                }
+            }
+        }
+    }
+
+    if ($ft !== '') {
+        $conv = raw_call(array('command' => 'convert', 'filetoken' => $ft, 'method' => '4', 'output' => 'txt'),
+            null, '', '', '');
+        $results['convert'] = $conv;
+
+        // لینک دانلود را با تحمل فاصله در نام کلید پیدا کن
+        $dlUrl = '';
+        if (!empty($conv['json_ok'])) {
+            $cj = json_decode((string) ($conv['body_raw'] ?? ''), true);
+            if (is_array($cj)) {
+                foreach ($cj as $k => $v) {
+                    $norm = strtolower(preg_replace('/[\s_\-]/', '', (string) $k));
+                    if ($norm === 'filetodownload' && is_scalar($v) && trim((string) $v) !== '') {
+                        $dlUrl = trim((string) $v);
+                        break;
+                    }
+                }
+            }
+        }
+        $results['convert']['download_url'] = $dlUrl;
+
+        // ۳-ب: دانلود واقعی فایل خروجی
+        if ($dlUrl !== '') {
+            $ch = curl_init();
+            $dlOpts = array('URL' => $dlUrl, 'RETURNTRANSFER' => true, 'TIMEOUT' => 60,
+                'SSL_VERIFYPEER' => true, 'SSL_VERIFYHOST' => 2, 'USERAGENT' => 'FactorKhan-Diag/1.2');
+            foreach ($dlOpts as $nm => $vv) {
+                if (defined('CURLOPT_' . $nm)) {
+                    @curl_setopt($ch, constant('CURLOPT_' . $nm), $vv);
+                }
+            }
+            $body = curl_exec($ch);
+            $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $results['download'] = array(
+                'http_status' => $code,
+                'curl_errno' => $body === false ? 1 : 0,
+                'curl_error' => '',
+                'body_len' => $body === false ? 0 : strlen((string) $body),
+                'body_raw' => $body === false ? '(false)' : mb_substr((string) $body, 0, 400),
+                'json_ok' => true,
+                'json_keys' => array(),
+                'json_scrubbed' => $body === false ? '(false)' : mb_substr((string) $body, 0, 400),
+                'field_names' => array(),
+                'file_size' => 0,
+                'file_name_sent' => '',
+                'mime_sent' => '',
+                'sent_bytes' => 0,
+                'url' => $dlUrl,
+            );
+        }
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -250,10 +320,33 @@ if ($run && $token !== '' && $url !== '') {
         'add_tempname' => '۳) ثبت فایل — نام temp + MIME عمومی (روش قبلی)',
         'add_uppercase' => '۴) ثبت فایل — کلید FileHandle با حرف بزرگ',
         'add_nomime' => '۵) ثبت فایل — بدون تعیین MIME',
+        'convert' => '۶) تبدیل واقعی (convert → لینک خروجی)',
+        'download' => '۷) دانلود فایل خروجی',
     );
     foreach ($labels as $key => $label):
         if (!isset($results[$key])) { continue; }
         $r = $results[$key];
+        if ($key === 'download') {
+            $okDl = ($r['http_status'] ?? 0) === 200 && ($r['body_len'] ?? 0) > 0;
+            ?>
+            <div class="card">
+              <h2><?= h($label) ?> — <span class="<?= $okDl ? 'ok' : 'bad' ?>"><?=
+                $okDl ? 'فایل خروجی دریافت شد ✓ (' . (int) $r['body_len'] . ' بایت)' : 'دانلود ناموفق'
+              ?></span></h2>
+              <table>
+                <tr><td>کد HTTP</td><td class="<?= ($r['http_status'] ?? 0) === 200 ? 'ok' : 'bad' ?>"><?= (int) ($r['http_status'] ?? 0) ?></td></tr>
+                <tr><td>لینک</td><td><code><?= h((string) ($r['url'] ?? '')) ?></code></td></tr>
+              </table>
+              <?php if (!$okDl): ?>
+                <p class="hint">اگر این مرحله خالی است ولی مرحلهٔ ۶ لینک داده، یعنی لینک دانلود
+                  برای این سرور قابل دسترسی نیست (فایروال یا توکن لینک).</p>
+              <?php endif; ?>
+              <pre><?= h((string) ($r['json_scrubbed'] ?? '')) ?></pre>
+            </div>
+            <?php
+            continue;
+        }
+
         $hasToken = $r['json_ok'] && (
             isset($r['json_scrubbed']) && preg_match('/"FileToken"\s*:\s*"[^"]+"/i', $r['json_scrubbed'])
             || preg_match('/"Filetoken"\s*:\s*"[^"]+"/i', (string) ($r['body_raw'] ?? ''))
@@ -317,6 +410,28 @@ if ($run && $token !== '' && $url !== '') {
     if ($modes !== '') {
         $sum[] = array('ok', 'روش‌های مجاز برای این فایل', $modes
             . ' — عکس و فاکتور دست‌نویس فقط «استخراج متن» را می‌پذیرد؛ برنامه خودکار همان را می‌فرستد.');
+    }
+
+    /* تبدیل و دانلود — مهم‌ترین بخش: اینجاست که «خروجی نمی‌آید» معلوم می‌شود */
+    $conv2 = $results['convert'] ?? null;
+    if ($conv2) {
+        $dlUrl2 = (string) ($conv2['download_url'] ?? '');
+        if ($dlUrl2 !== '') {
+            $sum[] = array('ok', 'تبدیل و لینک خروجی',
+                'سرویس لینک فایل خروجی را داد — مسیر عکس/PDF درست است.');
+        } elseif (!empty($conv2['json_ok'])) {
+            $sum[] = array('bad', 'تبدیل و لینک خروجی',
+                'سرویس لینک نداد. پاسخ خام مرحلهٔ ۶ را برای پشتیبانی بفرستید.');
+        } else {
+            $sum[] = array('bad', 'تبدیل و لینک خروجی', 'پاسخ سرویس قابل خواندن نبود.');
+        }
+    }
+    $dl2 = $results['download'] ?? null;
+    if ($dl2) {
+        $okDl2 = ($dl2['http_status'] ?? 0) === 200 && ($dl2['body_len'] ?? 0) > 0;
+        $sum[] = array($okDl2 ? 'ok' : 'bad', 'دانلود فایل خروجی',
+            $okDl2 ? 'فایل خروجی با موفقیت دریافت شد (' . (int) $dl2['body_len'] . ' بایت) — همه‌چیز آماده است.'
+                   : 'دانلود ناموفق بود؛ لینک برای این سرور در دسترس نیست.');
     }
     ?>
     <div class="card" style="border-color:#3ecf8e55">
