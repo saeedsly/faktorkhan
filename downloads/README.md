@@ -2,18 +2,24 @@
 
 همهٔ لینک‌ها مستقیم و بدون ورود به حساب کار می‌کنند.
 
-## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۱۲ کیلوبایت)
+## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۳۴ کیلوبایت)
 
 **دانلود:**
-https://raw.githubusercontent.com/saeedsly/faktorkhan/arena/9e0e2486-faktorkhan/downloads/faktorkhan-php-htdocs.zip
+https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-php-htdocs.zip
 
 **نصب (۳۰ ثانیه):**
 
-1. فایل زیپ را باز کنید → سه فایل: `index.php`، `.htaccess`، `config.sample.php`
-2. این سه فایل را در `C:\wamp64\www\faktorkhan\` بریزید
+1. فایل زیپ را باز کنید → یک پوشهٔ `faktorkhan` با ۹ فایل
+2. کل پوشه را در `C:\wamp64\www\` بگذارید (یعنی `C:\wamp64\www\faktorkhan\`)
 3. `http://localhost/faktorkhan/` را در مرورگر باز کنید
 4. گذرواژهٔ محلی بسازید → توکن را بچسبانید → **تست اعتبار** → فایل را آپلود کنید
 
+اگر Apache/WAMP اذیت می‌کند: `START-PHP-SERVER.bat` را دوبار کلیک کنید؛
+بدون Apache و بدون تنظیمات، سرور داخلی PHP را روی `127.0.0.1:8080` بالا می‌آورد.
+
+> پردازش در پس‌زمینه انجام می‌شود: صفحه قفل نمی‌شود، «صفحهٔ سفید» نداریم و
+> تلاش دوباره، فایل را از نو روی سرویس ابری ثبت نمی‌کند (اعتبار هدر نمی‌رود).
+>
 > روی ویندوز ۷ هم کار می‌کند (فقط PHP 7.4+ با افزونهٔ curl).
 > راهنمای کامل: [`docs/PHP-HTTPDOCKS-FA.md`](../docs/PHP-HTTPDOCKS-FA.md)
 
@@ -22,7 +28,7 @@ https://raw.githubusercontent.com/saeedsly/faktorkhan/arena/9e0e2486-faktorkhan/
 ## ۲) نسخهٔ کامل ویندوز ۱۰/۱۱ — پایتون همراه (۳۵ مگابایت)
 
 **دانلود:**
-https://raw.githubusercontent.com/saeedsly/faktorkhan/arena/9e0e2486-faktorkhan/downloads/faktorkhan-1.0.0-WINDOWS-PORTABLE.zip
+https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-1.0.0-WINDOWS-PORTABLE.zip
 
 **نصب:**
 
@@ -32,10 +38,10 @@ https://raw.githubusercontent.com/saeedsly/faktorkhan/arena/9e0e2486-faktorkhan/
 
 ---
 
-## ۳) کد منبع کامل (۵۱۶ کیلوبایت)
+## ۳) کد منبع کامل (۵۳۷ کیلوبایت)
 
 **دانلود:**
-https://raw.githubusercontent.com/saeedsly/faktorkhan/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
+https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
 
 **برای ویندوز ۷:** پایتون ۳.۸.۱۰ را از python.org نصب کنید (تیک *Add Python to PATH*)،
 بعد این زیپ را باز کنید و `START-WINDOWS.bat` را اجرا کنید.
@@ -67,6 +73,6 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 
 | فایل | حجم | برای |
 |---|---|---|
-| `faktorkhan-php-htdocs.zip` | ۱۲ KB | WAMP / XAMPP (ویندوز ۷ ✅) |
+| `faktorkhan-php-htdocs.zip` | ۳۴ KB | WAMP / XAMPP — ۹ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۵۱۶ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۵۳۷ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
