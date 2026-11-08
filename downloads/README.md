@@ -20,6 +20,10 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 > پردازش در پس‌زمینه انجام می‌شود: صفحه قفل نمی‌شود، «صفحهٔ سفید» نداریم و
 > تلاش دوباره، فایل را از نو روی سرویس ابری ثبت نمی‌کند (اعتبار هدر نمی‌رود).
 >
+> **متن مستقیم در باکس صفحه می‌آید** — قابل ویرایش و کپی، کنارش دکمه‌های
+> «دانلود متن (TXT)» و «دانلود Word». اگر فایل Word سرویس خراب باشد، برنامه
+> از همان متن یک Word سالم می‌سازد.
+>
 > روی ویندوز ۷ هم کار می‌کند (فقط PHP 7.4+ با افزونهٔ curl).
 > راهنمای کامل: [`docs/PHP-HTTPDOCKS-FA.md`](../docs/PHP-HTTPDOCKS-FA.md)
 
@@ -73,6 +77,6 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 
 | فایل | حجم | برای |
 |---|---|---|
-| `faktorkhan-php-htdocs.zip` | ۳۴ KB | WAMP / XAMPP — ۹ فایل (ویندوز ۷ ✅) |
+| `faktorkhan-php-htdocs.zip` | ۵۰ KB | WAMP / XAMPP — ۱۰ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۵۳۷ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۵۵۰ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
