@@ -2,6 +2,22 @@
    هسته برنامه — مسیریابی، احراز هویت، پوسته
    ══════════════════════════════════════════════════════════════ */
 const App = (() => {
+  /* ذخیره‌سازی امن (مرورگر ممکن است localStorage را مسدود کند) */
+  const ls = (() => {
+    try {
+      const probe = "__fk_probe__";
+      window.localStorage.setItem(probe, "1");
+      window.localStorage.removeItem(probe);
+      return window.localStorage;
+    } catch (err) {
+      const mem = Object.create(null);
+      return {
+        getItem: (k) => (k in mem ? mem[k] : null),
+        setItem: (k, v) => { mem[k] = String(v); },
+        removeItem: (k) => { delete mem[k]; },
+      };
+    }
+  })();
   const { $, $$, esc, num, toast, modal, badge } = UI;
 
   const ROUTES = {
@@ -37,7 +53,7 @@ const App = (() => {
   function setTheme(theme) {
     const value = theme === "light" ? "light" : "dark";
     document.documentElement.dataset.theme = value;
-    localStorage.setItem("fk_theme", value);
+    ls.setItem("fk_theme", value);
     const btn = $("#theme-toggle");
     if (btn) {
       btn.querySelector("span").textContent = value === "dark" ? "قالب تیره" : "قالب روشن";
@@ -88,11 +104,11 @@ const App = (() => {
   async function paintAnnouncement() {
     const text = (State.meta && State.meta.announcement) || "";
     const bar = $("#announcement-bar");
-    if (!text || localStorage.getItem("fk_announce_hidden") === text) { bar.classList.add("hidden"); return; }
+    if (!text || ls.getItem("fk_announce_hidden") === text) { bar.classList.add("hidden"); return; }
     $("#announcement-text").textContent = text;
     bar.classList.remove("hidden");
     $("#announcement-close").onclick = () => {
-      localStorage.setItem("fk_announce_hidden", text);
+      ls.setItem("fk_announce_hidden", text);
       bar.classList.add("hidden");
     };
   }
@@ -236,9 +252,11 @@ const App = (() => {
       const btn = form.querySelector("button[type=submit]");
       UI.setBusy(btn, true, "در حال ورود…");
       try {
+        const emailEl = form.querySelector('[name="email"]');
+        const passEl = form.querySelector('[name="password"]');
         const res = await API.login({
-          email: form.email.value.trim(),
-          password: form.password.value,
+          email: (emailEl && emailEl.value ? emailEl.value : "").trim(),
+          password: passEl && passEl.value ? passEl.value : "",
           device_id: API.deviceId(),
         });
         API.setToken(res.access_token);
@@ -259,13 +277,17 @@ const App = (() => {
       const btn = form.querySelector("button[type=submit]");
       UI.setBusy(btn, true, "در حال ساخت حساب…");
       try {
+        const val = (name) => {
+          const el = form.querySelector(`[name="${name}"]`);
+          return el && el.value ? el.value.trim() : "";
+        };
         const res = await API.register({
-          full_name: form.full_name.value.trim(),
-          company: form.company.value.trim(),
-          email: form.email.value.trim(),
-          phone: form.phone.value.trim(),
-          password: form.password.value,
-          license_key: form.license_key.value.trim(),
+          full_name: val("full_name"),
+          company: val("company"),
+          email: val("email"),
+          phone: val("phone"),
+          password: val("password"),
+          license_key: val("license_key"),
         });
         API.setToken(res.access_token);
         API.setCachedUser(res.user);
@@ -322,7 +344,7 @@ const App = (() => {
 
   /* ---------- راه‌اندازی ---------- */
   async function init() {
-    setTheme(localStorage.getItem("fk_theme") || "dark");
+    setTheme(ls.getItem("fk_theme") || "dark");
     bindAuth();
     if (navigator.onLine) {
       API.setUnauthorizedHandler(() => {

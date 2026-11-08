@@ -419,7 +419,7 @@ Object.assign(Views, (() => {
               phone: $("#p-phone", el).value.trim(),
             });
             State.user = res.user;
-            localStorage.setItem("fk_user", JSON.stringify(res.user));
+            try { localStorage.setItem("fk_user", JSON.stringify(res.user)); } catch (e) { /* بی‌صدا */ }
             window.dispatchEvent(new CustomEvent("fk:refresh"));
             toast("اطلاعات به‌روزرسانی شد");
           } catch (err) { toast(err.message, { type: "error" }); }

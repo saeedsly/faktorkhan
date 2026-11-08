@@ -832,7 +832,7 @@ const Views = (() => {
       try {
         const me = await API.me();
         State.user = me.user; State.sub = me.subscription;
-        localStorage.setItem("fk_user", JSON.stringify(me.user));
+        try { localStorage.setItem("fk_user", JSON.stringify(me.user)); } catch (e) { /* بی‌صدا */ }
         window.dispatchEvent(new CustomEvent("fk:refresh"));
       } catch (err) { /* بی‌صدا */ }
     };

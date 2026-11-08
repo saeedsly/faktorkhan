@@ -2,32 +2,50 @@
    لایه ارتباط با سرور — فاکتورخوان
    ══════════════════════════════════════════════════════════════ */
 const API = (() => {
+  /* ذخیره‌سازی امن: اگر مرورگر localStorage را مسدود کرده باشد (حالت ناشناس/IE)
+     برنامه نباید کامل از کار بیفتد. */
+  const store = (() => {
+    try {
+      const probe = "__fk_probe__";
+      window.localStorage.setItem(probe, "1");
+      window.localStorage.removeItem(probe);
+      return window.localStorage;
+    } catch (err) {
+      const mem = Object.create(null);
+      return {
+        getItem: (k) => (k in mem ? mem[k] : null),
+        setItem: (k, v) => { mem[k] = String(v); },
+        removeItem: (k) => { delete mem[k]; },
+      };
+    }
+  })();
+
   const TOKEN_KEY = "fk_token";
   const USER_KEY = "fk_user";
   const DEVICE_KEY = "fk_device";
   const THEME_KEY = "fk_theme";
 
   function deviceId() {
-    let id = localStorage.getItem(DEVICE_KEY);
+    let id = store.getItem(DEVICE_KEY);
     if (!id) {
       id = "DV-" + Array.from(crypto.getRandomValues(new Uint8Array(8)))
         .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-      localStorage.setItem(DEVICE_KEY, id);
+      store.setItem(DEVICE_KEY, id);
     }
     return id;
   }
 
-  const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
-  const setToken = (t) => localStorage.setItem(TOKEN_KEY, t || "");
+  const getToken = () => store.getItem(TOKEN_KEY) || "";
+  const setToken = (t) => store.setItem(TOKEN_KEY, t || "");
   const clearToken = () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    store.removeItem(TOKEN_KEY);
+    store.removeItem(USER_KEY);
   };
 
   const cachedUser = () => {
-    try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); } catch { return null; }
+    try { return JSON.parse(store.getItem(USER_KEY) || "null"); } catch { return null; }
   };
-  const setCachedUser = (u) => localStorage.setItem(USER_KEY, JSON.stringify(u || null));
+  const setCachedUser = (u) => store.setItem(USER_KEY, JSON.stringify(u || null));
 
   let onUnauthorized = () => {};
   const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
