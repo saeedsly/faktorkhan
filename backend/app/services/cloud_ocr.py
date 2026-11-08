@@ -177,15 +177,38 @@ def _call(payload: dict[str, Any], files: dict | None = None, timeout: int | Non
 
 
 # ------------------------------------------------------------ عملیات
+MIME_BY_SUFFIX = {
+    ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".png": "image/png", ".bmp": "image/bmp", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+    ".mp4": "video/mp4", ".ogg": "audio/ogg", ".flac": "audio/flac", ".3gp": "video/3gpp",
+}
+
+
 def add_file(path: Path, file_name: str | None = None) -> dict:
+    """ثبت فایل در سرویس ابری.
+
+    نکتهٔ مهم: نوع فایل باید MIME واقعی باشد (image/jpeg و ...)، نه
+    «multipart/form-data». ارسال نوع اشتباه باعث می‌شود برخی سرورها فایل را
+    قبول نکنند و توکن برنگردانند.
+    """
     suffix = path.suffix.lower()
     if suffix not in IMAGE_OR_PDF and suffix not in AUDIO_VIDEO:
         raise CloudError("قالب فایل پشتیبانی نمی‌شود. تصویر، PDF یا فایل صوتی/تصویری ارسال کنید.", "BadType")
     name = file_name or path.name
+    mime = MIME_BY_SUFFIX.get(suffix, "application/octet-stream")
     with open(path, "rb") as fh:
-        files = {"filehandle": (name, fh, "multipart/form-data")}
+        files = {"filehandle": (name, fh, mime)}
         data = _call({"command": "addfile"}, files=files)
-    return _normalize_add(data, suffix)
+    result = _normalize_add(data, suffix)
+    if not result["file_token"]:
+        status = str(data.get("Status") or "").strip()
+        keys = ", ".join(k for k in data if not k.startswith("_")) or "هیچ"
+        raise CloudError(
+            f"سرویس ابری توکن فایل را برنگرداند (وضعیت: {status or 'خالی'} — کلیدهای پاسخ: {keys}).",
+            "NoFileToken",
+        )
+    return result
 
 
 def add_file_link(link: str) -> dict:
@@ -195,9 +218,22 @@ def add_file_link(link: str) -> dict:
     return _normalize_add(data, Path(link.split("?")[0]).suffix.lower())
 
 
+def _find_key(data: dict, names: tuple[str, ...]) -> str:
+    """جست‌وجوی بازگشتی یک کلید در پاسخ (تحمل تفاوت حرف بزرگ/کوچک و ساختار تودرتو)."""
+    for name in names:
+        if name in data and data[name] not in (None, ""):
+            return str(data[name]).strip()
+    for value in data.values():
+        if isinstance(value, dict):
+            found = _find_key(value, names)
+            if found:
+                return found
+    return ""
+
+
 def _normalize_add(data: dict, suffix: str) -> dict:
     return {
-        "file_token": str(data.get("FileToken") or data.get("Filetoken") or ""),
+        "file_token": _find_key(data, ("FileToken", "Filetoken", "filetoken", "fileToken", "File_Token")),
         "pages": int(str(data.get("PageCount") or 0).split(".")[0] or 0),
         "duration": int(str(data.get("FileDuration") or 0).split(".")[0] or 0),
         "methods": [int(m) for m in str(data.get("ConvertMethods") or "").split(",") if m.strip().isdigit()],

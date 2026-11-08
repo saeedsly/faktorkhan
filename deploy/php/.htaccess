@@ -4,7 +4,7 @@
 Options -Indexes
 
 # ── فایل‌های حساس هرگز سرو نشوند ──────────────────────────────
-<FilesMatch "^(fk-config\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md)$">
+<FilesMatch "^(fk-config\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md|fk-diag-sample\.png)$">
     Require all denied
 </FilesMatch>
 

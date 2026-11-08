@@ -96,7 +96,11 @@ def _run_cloud(job: OcrJob) -> None:
 
     file_token = added["file_token"]
     if not file_token:
-        raise cloud_ocr.CloudError("سرویس ابری توکن فایل را برنگرداند.", "NoFileToken")
+        raise cloud_ocr.CloudError(
+            "سرویس ابری توکن فایل را برنگرداند. فایل را دوباره با نام و قالب درست (jpg/png/pdf) "
+            "ارسال کنید؛ اگر تکرار شد صفحهٔ عیب‌یابی (diag) را ببینید.",
+            "NoFileToken",
+        )
     meta.update({"methods": added["methods"], "kind": added["kind"], "remote": True})
     _update(job.id, file_token=file_token, pages=added["pages"] or job.pages, meta=meta,
             progress=22, message="فایل در سرویس ابری ثبت شد.")

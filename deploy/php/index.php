@@ -163,9 +163,13 @@ function mask(?string $value): string
  * فراخوانی درگاه سرویس ابری. توکن فقط اینجا استفاده می‌شود و در هیچ خروجی نمی‌آید.
  * @return array{ok:bool,data:array,message:string,code:string}
  */
-function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime = null): array
+function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime = null, string $fileName = ''): array
 {
     $cfg = load_config();
+    $uploadMethod = '';
+    if ($filePath !== null) {
+        $uploadMethod = strtolower((string) ($cfg['upload_method'] ?? 'multipart'));
+    }
     $url = gateway_url();
     $token = (string) ($cfg['token'] ?? '');
     $timeout = (int) ($cfg['timeout'] ?? 180);
@@ -186,8 +190,31 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
     $payload = $fields;
     $payload['token'] = $token;
     if ($filePath !== null) {
-        // ارسال فایل از مسیر موقت سرور (نه از مرورگر) — سازگار با PHP 5.5+
-        $payload['filehandle'] = new CURLFile($filePath, $fileMime ?: 'application/octet-stream', basename($filePath));
+        /* مهم: نام فایل باید نام اصلی باشد (مثلاً invoice.jpg)، نه نام پوشهٔ موقت
+           (php3F2A.tmp). بعضی سرویس‌ها از پسوند نام، نوع فایل را تشخیص می‌دهند و
+           با پسوند .tmp فایل را قبول نمی‌کنند و توکن برنمی‌گردانند. */
+        $safeName = $fileName ?: basename($filePath);
+        if (!empty($cfg['simple_filename'])) {
+            $safeName = 'document' . (pathinfo($safeName, PATHINFO_EXTENSION) ? '.' . pathinfo($safeName, PATHINFO_EXTENSION) : '');
+        }
+        if ($uploadMethod === 'base64') {
+            /* روش جایگزین: برابر مستندات، «محتویات» فایل را در همان فیلد می‌فرستیم.
+               برای فایل‌های کوچک مناسب است (حجم ~۱.۳۳ برابر می‌شود). */
+            $raw = @file_get_contents($filePath);
+            if ($raw === false) {
+                return array('ok' => false, 'data' => array(),
+                    'message' => 'خواندن فایل برای ارسال ممکن نشد.', 'code' => 'ReadFile');
+            }
+            $payload['filehandle'] = base64_encode($raw);
+            $payload['filename'] = $safeName;
+            $payload['filemime'] = $fileMime ?: 'application/octet-stream';
+        } elseif (class_exists('CURLFile')) {
+            $payload['filehandle'] = new CURLFile($filePath, $fileMime ?: 'application/octet-stream', $safeName);
+        } else {
+            // PHP 5.4 و قدیمی‌تر: نحو @ نیاز به تنظیم اضافی دارد
+            $payload['filehandle'] = '@' . $filePath . ';filename=' . $safeName
+                . ';type=' . ($fileMime ?: 'application/octet-stream');
+        }
     }
 
     $ch = curl_init();
@@ -203,6 +230,10 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
         CURLOPT_FOLLOWLOCATION => false,
         CURLOPT_USERAGENT => 'FactorKhan-PHP/1.0',
     ));
+    if (!class_exists('CURLFile') && defined('CURLOPT_SAFE_UPLOAD')) {
+        /* PHP 5.4: بدون این تنظیم، رشتهٔ @... به‌عنوان متن ارسال می‌شود نه فایل */
+        curl_setopt($ch, CURLOPT_SAFE_UPLOAD, false);
+    }
     $body = curl_exec($ch);
     $err = curl_error($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -213,9 +244,13 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
             'message' => 'ارتباط با سرویس ابری برقرار نشد: ' . scrub($err, $token), 'code' => 'Network');
     }
     $data = json_decode((string) $body, true);
-    if (!is_array($data)) {
+    /* باید یک «شیء» JSON باشد، نه آرایه یا متن ساده */
+    $is_object_shape = is_array($data) && ($data === array() || array_keys($data) !== range(0, count($data) - 1));
+    if (!$is_object_shape) {
+        $snippet = trim(scrub(mb_substr((string) $body, 0, 200), $token));
         return array('ok' => false, 'data' => array(),
-            'message' => 'پاسخ نامعتبر از سرویس ابری (کد ' . $status . '): ' . scrub(mb_substr((string) $body, 0, 160), $token),
+            'message' => 'پاسخ سرویس ابری قابل تفسیر نیست (کد ' . $status . '). '
+                . ($snippet !== '' ? 'پاسخ: ' . $snippet : 'پاسخ خالی بود.'),
             'code' => 'BadResponse');
     }
     $st = (string) ($data['Status'] ?? '');
@@ -240,6 +275,29 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
             'message' => scrub((string) ($data['Message'] ?? 'خطای نامشخص'), $token), 'code' => 'Error');
     }
     return array('ok' => true, 'data' => $data, 'message' => '', 'code' => $st);
+}
+
+/**
+ * یافتن اولین مقدار «توکن فایل» در پاسخ، حتی اگر کلید نام دیگری داشته باشد
+ * یا داخل یک شیء تودرتو باشد.
+ */
+function find_file_token(array $data): string
+{
+    $candidates = array('FileToken', 'Filetoken', 'filetoken', 'fileToken', 'File_Token', 'Token', 'token');
+    foreach ($candidates as $k) {
+        if (!empty($data[$k]) && is_scalar($data[$k])) {
+            return trim((string) $data[$k]);
+        }
+    }
+    foreach ($data as $v) {
+        if (is_array($v)) {
+            $found = find_file_token($v);
+            if ($found !== '') {
+                return $found;
+            }
+        }
+    }
+    return '';
 }
 
 function scrub(string $text, string $token): string
@@ -477,14 +535,37 @@ if ($method === 'POST' && ($_POST['action'] ?? '') === 'process') {
     $delete_after = !empty($_POST['delete_after']);
 
     $tmpName = (string) $file['tmp_name'];
-    $add = call_gateway(array('command' => 'addfile'), $tmpName, (string) ($file['type'] ?? ''));
+    $originalName = (string) ($file['name'] ?? 'document.' . $ext);
+    /* نام فایل اصلی را به سرویس می‌فرستیم (نه phpXXXX.tmp). */
+    $sendName = preg_replace('/[^\w.\-]/u', '_', basename($originalName)) ?: ('document.' . $ext);
+    $mime = (string) ($file['type'] ?? '');
+    if ($mime === '' || $mime === 'application/octet-stream') {
+        $mimeMap = array(
+            'pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png', 'bmp' => 'image/bmp', 'tif' => 'image/tiff', 'tiff' => 'image/tiff',
+            'mp3' => 'audio/mpeg', 'wav' => 'audio/wav', 'm4a' => 'audio/mp4',
+            'mp4' => 'video/mp4', 'ogg' => 'audio/ogg', 'flac' => 'audio/flac', '3gp' => 'video/3gpp',
+        );
+        $mime = $mimeMap[$ext] ?? 'application/octet-stream';
+    }
+    $add = call_gateway(array('command' => 'addfile'), $tmpName, $mime, $sendName);
     if (!$add['ok']) {
         $result = array('ok' => false, 'stage' => 'addfile', 'message' => $add['message']);
     } else {
-        $fileToken = (string) ($add['data']['FileToken'] ?? '');
-        $pages = (int) ($add['data']['PageCount'] ?? 0);
+        $d = $add['data'];
+        $fileToken = find_file_token($d);
+        $pages = (int) ($d['PageCount'] ?? $d['Pagecount'] ?? 0);
+        $st = (string) ($d['Status'] ?? '');
         if ($fileToken === '') {
-            $result = array('ok' => false, 'stage' => 'addfile', 'message' => 'سرور توکن فایل برنگرداند.');
+            /* پیام دقیق: چه وضعیتی برگشت و چه کلیدهایی داشت؟ (بدون افشای توکن) */
+            $keys = $d ? implode(', ', array_keys($d)) : 'هیچ';
+            $detail = 'وضعیت: ' . ($st !== '' ? $st : '(خالی)') . ' — کلیدهای پاسخ: ' . $keys;
+            $result = array(
+                'ok' => false,
+                'stage' => 'addfile',
+                'message' => 'سرور توکن فایل برنگرداند. ' . $detail,
+                'hint' => 'این صفحه را باز کنید تا پاسخ کامل سرور را ببینید: diag.php',
+            );
         } else {
             $conv = call_gateway(array(
                 'command' => 'convert',
@@ -718,7 +799,7 @@ $postMax = ini_get('post_max_size');
 
     <div class="card">
       <h2>📄 پردازش فایل</h2>
-      <form method="post" enctype="multipart/form-data" autocomplete="off">
+      <form method="post" enctype="multipart/form-data" autocomplete="off" id="process-form">
         <input type="hidden" name="action" value="process">
         <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
         <label>فایل (عکس، PDF یا صوتی)</label>
@@ -753,6 +834,8 @@ $postMax = ini_get('post_max_size');
       </form>
       <p class="muted">حداکثر حجم در این سرور: <b class="ltr"><?= h((string) $uploadMax) ?></b> —
         حداکثر POST: <b class="ltr"><?= h((string) $postMax) ?></b></p>
+      <p class="muted">اگر خطای «توکن فایل برنگشت» گرفتید، صفحهٔ
+        <a href="diag.php" style="color:#d4af37">عیب‌یابی (diag.php)</a> پاسخ کامل سرور را نشان می‌دهد.</p>
     </div>
 
     <?php if ($result !== null): ?>
@@ -772,6 +855,12 @@ $postMax = ini_get('post_max_size');
         <?php else: ?>
           <p class="muted">مرحله: <b class="ltr"><?= h((string) ($result['stage'] ?? '')) ?></b></p>
           <div class="flash error" style="margin:0"><?= h((string) ($result['message'] ?? '')) ?></div>
+          <?php if (!empty($result['hint'])): ?>
+            <p class="muted" style="margin-top:10px">
+              🔧 <b>عیب‌یابی:</b> <?= h((string) $result['hint']) ?>
+              (<a href="diag.php" style="color:#d4af37">diag.php</a>)
+            </p>
+          <?php endif; ?>
         <?php endif; ?>
       </div>
     <?php endif; ?>
