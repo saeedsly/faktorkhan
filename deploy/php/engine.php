@@ -388,7 +388,8 @@ if (!function_exists('fk_understand')) {
     function fk_understand(string $rawText, array $opts = array()): array
     {
         $autofix = array_key_exists('autofix', $opts) ? (bool) $opts['autofix'] : true;
-        $text = fk_norm_chars($rawText);
+        // پاکسازی کامل پیش از هر چیز: نویز، سرصفحه، سطر شکسته، تکرار
+        $text = fk_clean_for_reading($rawText);
 
         // ۱) سطرهای خالی و حاشیه‌ای
         $warnings = array();
@@ -687,5 +688,306 @@ if (!function_exists('fk_understand')) {
         if (count($items) >= 2) $score += 5;
         if (fk_len($text) < 60) $score -= 10;
         return max(0, min(100, (int) $score));
+    }
+}
+
+if (!function_exists('fk_clean_for_reading')) {
+
+    /* ═══════════════ ۶. افزایش کیفیت خوانش ═══════════════ */
+
+    /**
+     * (۱) شکستن سطرهای به‌هم‌چسبیده.
+     * OCR گاهی چند قلم را در یک سطر می‌ریزد؛ اینجا هرجا الگوی
+     * «عدد + فاصله + متن فارسی» تکرار شود سطر شکسته می‌شود.
+     */
+    function fk_break_long_lines(string $text): string
+    {
+        $out = array();
+        foreach (explode("\n", $text) as $line) {
+            if (fk_len($line) < 90) { $out[] = $line; continue; }
+            // نقطهٔ برش: قبل از «عدد، سپس یک نام کالای تازه»
+            $parts = preg_split('/(?<=[\d,٬])\s{2,}(?=[\x{0600}-\x{06FF}A-Za-z])/u', $line);
+            if ($parts && count($parts) > 1) {
+                foreach ($parts as $p) { $out[] = trim($p); }
+            } else {
+                $out[] = $line;
+            }
+        }
+        return implode("\n", $out);
+    }
+
+    /** (۲) حذف سرصفحه/پاصفحهٔ تکراری هر صفحه (شماره صفحه، نام نرم‌افزار، تاریخ چاپ). */
+    function fk_drop_running_heads(string $text): string
+    {
+        $lines = explode("\n", $text);
+        if (count($lines) < 3) return $text;   // آستانه بر اساس محتوا، نه تعداد سطر
+        $counts = array();
+        foreach ($lines as $l) {
+            $k = trim($l);
+            if ($k === '') continue;
+            $counts[$k] = ($counts[$k] ?? 0) + 1;
+        }
+        $out = array();
+        foreach ($lines as $l) {
+            $k = trim($l);
+            // سطری که دو بار یا بیشتر عیناً تکرار شده و کوتاه است = سرصفحه
+            if ($k !== '' && fk_len($k) < 70 && ($counts[$k] ?? 0) >= 2) continue;
+            // «صفحه ۲ از ۵» — حتی وقتی در میان متن دیگر آمده باشد
+            if (preg_match('/صفحه\s*\d+\s*(?:از|\/)\s*\d+/u', $k)) continue;
+            if (preg_match('/\bpage\s*\d+\s*(?:of|\/)\s*\d+/iu', $k)) continue;
+            // «تاریخ چاپ: ...» در سرصفحه
+            if (preg_match('/^\s*(?:تاریخ چاپ|چاپ شده در|printed on)\b/iu', $k)) continue;
+            $out[] = $l;
+        }
+        return implode("\n", $out);
+    }
+
+    /** (۳) چسباندن سطری که ادامهٔ شرح کالای قبلی است (بدون عدد). */
+    function fk_join_wrapped(string $text): string
+    {
+        $lines = explode("\n", $text);
+        $out = array();
+        foreach ($lines as $l) {
+            $t = trim($l);
+            if ($t === '') { $out[] = ''; continue; }
+            $prev = count($out) ? end($out) : '';
+            $prevHasNumbers = (bool) preg_match('/\d/', $prev);
+            $thisHasNumbers = (bool) preg_match('/\d/', $t);
+            // سطر کوتاه، بدون عدد، و قبلی عدد داشت → ادامهٔ شرح است
+            if ($prev !== '' && $prevHasNumbers && !$thisHasNumbers
+                && fk_len($t) < 60 && !preg_match('/[:：]$/u', $prev)) {
+                $out[count($out) - 1] = rtrim($prev) . ' ' . $t;
+            } else {
+                $out[] = $t;
+            }
+        }
+        return implode("\n", $out);
+    }
+
+    /** (۴) حذف تکرار پشت‌سرهم سطرها (OCR تکراری). */
+    function fk_dedupe_lines(string $text): string
+    {
+        $out = array();
+        $prev = null;
+        foreach (explode("\n", $text) as $l) {
+            $t = trim($l);
+            if ($t !== '' && $t === $prev) continue;
+            $out[] = $t;
+            $prev = $t;
+        }
+        return implode("\n", $out);
+    }
+
+    /** (۵) یکدست‌سازی فاصله‌های اطراف نقطه/ویرگول و پرانتز. */
+    function fk_tidy_punctuation(string $text): string
+    {
+        $text = preg_replace('/\s+([،,؛;:.!؟?])/u', '$1', $text);
+        $text = preg_replace('/\(\s+/u', '(', $text);
+        $text = preg_replace('/\s+\)/u', ')', $text);
+        return $text;
+    }
+
+    /** (۶) حذف کاراکترهای OCR-زباله که در فاکتور معنا ندارند. */
+    function fk_drop_noise(string $text): string
+    {
+        // تک‌کاراکترهای تنها در سطر (نویز اسکن)
+        $lines = explode("\n", $text);
+        $out = array();
+        foreach ($lines as $l) {
+            $t = trim($l);
+            if ($t !== '' && fk_len($t) === 1 && !preg_match('/[\d]/', $t)) continue;
+            $out[] = $l;
+        }
+        $clean = implode("\n", $out);
+        return preg_replace('/[|¦]{2,}/u', '|', $clean);
+    }
+
+    /**
+     * زنجیرهٔ کامل پاکسازی برای نمایش و برای موتور.
+     * ترتیب مهم است: نویز → نویسه → سرصفحه → شکستن → چسباندن → نقطه‌گذاری.
+     */
+    function fk_clean_for_reading(string $raw): string
+    {
+        $t = fk_norm_chars($raw);
+        $t = fk_drop_noise($t);
+        $t = fk_drop_running_heads($t);
+        $t = fk_break_long_lines($t);
+        $t = fk_join_wrapped($t);
+        $t = fk_dedupe_lines($t);
+        $t = fk_tidy_punctuation($t);
+        // سطرهای خالی پشت‌سرهم → یکی
+        $t = preg_replace("/\n{3,}/u", "\n\n", $t);
+        return trim($t);
+    }
+}
+
+if (!function_exists('fk_detect_meta')) {
+
+    /* ═══════════════ ۷. فهم فرادادهٔ سند ═══════════════ */
+
+    /**
+     * تاریخ شمسی/میلادی را پیدا و نرمال می‌کند.
+     * خروجی: آرایه‌ای از تاریخ‌های یافت‌شده با نوعشان.
+     */
+    function fk_find_dates(string $text): array
+    {
+        $found = array();
+        $t = fk_digits_latin($text);
+
+        // شمسی: 1404/08/16 یا ۱۴۰۴-۸-۱۶
+        if (preg_match_all('/(1[34]\d{2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})/u', $t, $m, PREG_SET_ORDER)) {
+            foreach ($m as $g) {
+                $found[] = array('type' => 'jalali', 'value' => sprintf('%04d/%02d/%02d', $g[1], $g[2], $g[3]),
+                    'raw' => $g[0]);
+            }
+        }
+        // میلادی: 2024/05/12 یا 12-05-2024
+        if (preg_match_all('/(20\d{2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})/', $t, $m, PREG_SET_ORDER)) {
+            foreach ($m as $g) {
+                $found[] = array('type' => 'gregorian', 'value' => sprintf('%04d/%02d/%02d', $g[1], $g[2], $g[3]),
+                    'raw' => $g[0]);
+            }
+        }
+        // نام ماه فارسی: «۱۶ آبان ۱۴۰۴»
+        $months = array('فروردین' => 1, 'اردیبهشت' => 2, 'خرداد' => 3, 'تیر' => 4, 'مرداد' => 5,
+            'شهریور' => 6, 'مهر' => 7, 'آبان' => 8, 'آذر' => 9, 'دی' => 10, 'بهمن' => 11, 'اسفند' => 12);
+        foreach ($months as $name => $num) {
+            if (preg_match('/(\d{1,2})\s*' . $name . '\s*(1[34]\d{2})/u', $t, $g)) {
+                $found[] = array('type' => 'jalali',
+                    'value' => sprintf('%04d/%02d/%02d', $g[2], $num, $g[1]), 'raw' => $g[0]);
+            }
+        }
+        return $found;
+    }
+
+    /** شمارهٔ فاکتور را از الگوهای رایج بیرون می‌کشد. */
+    function fk_find_invoice_number(string $text): string
+    {
+        $t = fk_digits_latin($text);
+        $patterns = array(
+            '/(?:شماره\s*(?:فاکتور|صورتحساب|سند)|فاکتور\s*شماره|invoice\s*(?:no|number|#)|فاکتور\s*no)\s*[:：#]?\s*([A-Za-z0-9\-\/\.]{3,30})/iu',
+            '/\b(?:NO|No|#)\s*[:.]?\s*([A-Za-z0-9\-\/\.]{3,30})/u',
+            '/(?:شماره)\s*[:：]\s*([0-9\-\/]{3,25})/u',
+        );
+        foreach ($patterns as $p) {
+            if (preg_match($p, $t, $m)) {
+                $v = trim($m[1], " .:-#");
+                if ($v !== '' && !preg_match('/^\d{4}\/\d{2}\/\d{2}$/', $v)) return $v;
+            }
+        }
+        return '';
+    }
+
+    /** واحد پول و ضریب آن را حدس می‌زند (ریال یا تومان). */
+    function fk_detect_currency(string $text): array
+    {
+        $t = fk_lower($text);
+        if (preg_match('/\b(تومان|toman|irt)\b/u', $t)) {
+            return array('code' => 'IRT', 'label' => 'تومان', 'ratio' => 10); // ۱ تومان = ۱۰ ریال
+        }
+        if (preg_match('/\b(ریال|rial|irr)\b/u', $t)) {
+            return array('code' => 'IRR', 'label' => 'ریال', 'ratio' => 1);
+        }
+        if (preg_match('/\b(دلار|usd|\$)\b/u', $t)) return array('code' => 'USD', 'label' => 'دلار', 'ratio' => 1);
+        if (preg_match('/\b(یورو|eur|€)\b/u', $t)) return array('code' => 'EUR', 'label' => 'یورو', 'ratio' => 1);
+        // پیش‌فرض ایران
+        return array('code' => 'IRR', 'label' => 'ریال', 'ratio' => 1);
+    }
+
+    /** نرخ مالیات اعلام‌شده را پیدا می‌کند (۶٪، ۹٪، ۱۰٪). */
+    function fk_detect_tax_rate(string $text, array $totals): int
+    {
+        if (preg_match_all('/(\d{1,2})\s*(?:درصد|٪|%)/u', fk_digits_latin($text), $m)) {
+            foreach ($m[1] as $pct) {
+                $p = (int) $pct;
+                if ($p > 0 && $p <= 30) return $p;
+            }
+        }
+        $sub = (int) ($totals['subtotal'] ?? 0);
+        $tax = (int) ($totals['tax'] ?? 0);
+        if ($sub > 0 && $tax > 0) {
+            $rate = (int) round($tax / $sub * 100);
+            if ($rate >= 1 && $rate <= 30) return $rate;
+        }
+        return 0;
+    }
+
+    /** جمع‌بندی فراداده در یک آرایه. */
+    function fk_detect_meta(string $text, array $totals = array()): array
+    {
+        $dates = fk_find_dates($text);
+        return array(
+            'dates' => $dates,
+            'date' => $dates ? $dates[0]['value'] : '',
+            'date_type' => $dates ? $dates[0]['type'] : '',
+            'number' => fk_find_invoice_number($text),
+            'currency' => fk_detect_currency($text),
+            'tax_rate' => fk_detect_tax_rate($text, $totals),
+        );
+    }
+}
+
+if (!function_exists('fk_quality_report')) {
+
+    /* ═══════════════ ۸. گزارش کیفیت خوانش ═══════════════ */
+
+    /**
+     * به کاربر می‌گوید این خوانش چقدر سالم است و چه کاری باید بکند.
+     * خروجی: array('grade' => A..D, 'score' => 0..100, 'checks' => [...], 'advice' => '...')
+     */
+    function fk_quality_report(string $text, array $understood): array
+    {
+        $checks = array();
+        $items = $understood['items'] ?? array();
+        $totals = $understood['totals'] ?? array();
+        $issues = $understood['issues'] ?? array();
+
+        $add = function ($name, $ok, $why) use (&$checks) {
+            $checks[] = array('name' => $name, 'ok' => (bool) $ok, 'detail' => $why);
+        };
+
+        $len = fk_len($text);
+        $add('طول متن', $len >= 80, fk_len($text) < 80 ? 'متن خیلی کوتاه است' : 'متن کافی است');
+        $add('اقلام شناسایی‌شده', count($items) >= 1, count($items) . ' قلم');
+        $add('قیمت واحد', count($items) > 0 && count(array_filter($items, function ($i) {
+            return (int) $i['unit_price'] > 0;
+        })) === count($items), 'همهٔ اقلام قیمت دارند');
+        $add('سازگاری عددی', count($issues) === 0, count($issues) . ' اشکال');
+        $add('جمع اعلام‌شده', !empty($totals['subtotal']), 'جمع در سند پیدا شد');
+
+        $passed = 0;
+        foreach ($checks as $c) if ($c['ok']) $passed++;
+        $score = (int) round($passed / max(1, count($checks)) * 100);
+
+        $grade = $score >= 90 ? 'A' : ($score >= 70 ? 'B' : ($score >= 50 ? 'C' : 'D'));
+        $advice = 'همه‌چیز سالم است؛ فقط یک نگاه سریع بیندازید.';
+        if ($grade === 'C') $advice = 'چند فیلد را دستی کنترل کنید؛ متن خوانش‌شده در پایین صفحه است.';
+        if ($grade === 'D') $advice = 'کیفیت خوانش پایین است. عکس واضح‌تری بگیرید یا فیلدها را دستی پر کنید.';
+
+        return array('grade' => $grade, 'score' => $score, 'checks' => $checks, 'advice' => $advice);
+    }
+}
+
+if (!function_exists('fk_suggestions')) {
+
+    /* ═══════════════ ۹. پیشنهاد برای خوانش بهتر ═══════════════ */
+
+    /** بر اساس کیفیت فایل/متن، پیشنهاد عملی می‌دهد (بدون افشای سرویس). */
+    function fk_suggestions(string $ext, int $bytes, int $pages, array $job = array()): array
+    {
+        $out = array();
+        if (in_array($ext, array('jpg', 'jpeg', 'png', 'bmp', 'webp'), true) && $bytes < 60000) {
+            $out[] = 'عکس کوچک است؛ با کیفیت بالاتر (حداقل ۱ مگابایت) دقیق‌تر خوانده می‌شود.';
+        }
+        if ($pages > 5) {
+            $out[] = $pages . ' صفحه است؛ برای سرعت بیشتر، صفحه‌به‌صفحه بفرستید.';
+        }
+        if (in_array($ext, array('doc', 'docx', 'txt', 'xls', 'xlsx'), true)) {
+            $out[] = 'فایل متنی است؛ اگر متن اصلی دارید مستقیم بچسبانید تا سریع‌تر باشد.';
+        }
+        if (!empty($job['slow'])) {
+            $out[] = 'این فایل کند پردازش شد؛ اگر تکرار شد فایل را به بخش‌های کوچک‌تر بشکنید.';
+        }
+        return $out;
     }
 }

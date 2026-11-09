@@ -1296,6 +1296,8 @@ function job_queue(array $job, string $localFile, string $sendName, string $mime
     $job['local'] = $localFile;
     $job['send_name'] = $sendName;
     $job['mime'] = $mime;
+    $job['ext'] = strtolower(pathinfo($sendName, PATHINFO_EXTENSION));
+    $job['bytes'] = is_file($localFile) ? (int) @filesize($localFile) : 0;
     $job['output'] = $output;
     $job['delete_after'] = $deleteAfter;
     $job['status'] = 'queued';
@@ -1830,13 +1832,25 @@ function job_finish_text(array $job, string $text): array
         if (function_exists('fk_understand')) {
             try {
                 $u = fk_understand($text);
+                $meta = fk_detect_meta($u['text'], $u['totals']);
+                $quality = fk_quality_report($u['text'], $u);
                 $job['understood'] = array(
                     'items' => $u['items'],
                     'totals' => $u['totals'],
                     'issues' => $u['issues'],
                     'confidence' => $u['confidence'],
                     'item_count' => $u['item_count'],
-                    'cleaned' => fk_canonical_numbers(fk_norm_chars($text)),
+                    'meta' => $meta,
+                    'quality' => $quality,
+                    'cleaned' => fk_canonical_numbers($u['text']),
+                );
+                /* متن یکدست‌شده جای متن خام را می‌گیرد: خوانا و آمادهٔ کپی */
+                $job['text_clean'] = $u['text'];
+                $job['suggestions'] = fk_suggestions(
+                    strtolower((string) ($job['ext'] ?? '')),
+                    (int) ($job['bytes'] ?? 0),
+                    (int) ($job['pages'] ?? 0),
+                    $job
                 );
             } catch (Throwable $e) {
                 $job['understood'] = array('error' => 'engine: ' . $e->getMessage());

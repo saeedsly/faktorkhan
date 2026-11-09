@@ -83,6 +83,9 @@ if ($api !== '') {
                 'engine' => (string) ($job['engine'] ?? 'cloud'),
                 'understood' => isset($job['understood']) && is_array($job['understood'])
                     ? $job['understood'] : null,
+                'text_clean' => (string) ($job['text_clean'] ?? ''),
+                'suggestions' => isset($job['suggestions']) && is_array($job['suggestions'])
+                    ? $job['suggestions'] : array(),
                 'cleanup' => !empty($job['cleanup_pending']),
                 'real_progress' => !empty($job['real_progress']),
                 'slow' => !empty($job['slow']),
@@ -526,6 +529,14 @@ if ($logged) {
     color:#fbbf24;border-radius:9px;padding:9px 11px;font-size:12px;margin-bottom:9px;line-height:1.9}
   .uf-ok{background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.28);
     color:#34d399;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:9px}
+  .qbadge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+  .qA{background:rgba(52,211,153,.18);color:#34d399}
+  .qB{background:rgba(96,165,250,.18);color:#60a5fa}
+  .qC{background:rgba(251,191,36,.18);color:#fbbf24}
+  .qD{background:rgba(248,113,113,.18);color:#f87171}
+  .uf-meta{font-size:11.5px;color:var(--dim);margin-bottom:8px}
+  .uf-suggest{background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.25);
+    color:#93c5fd;border-radius:9px;padding:8px 11px;font-size:11.5px;margin-bottom:9px;line-height:1.9}
   .ltr{direction:ltr;text-align:left;font-family:ui-monospace,monospace}
   .foot{color:#5d6779;font-size:11px;text-align:center;margin:20px 0 10px}
   a{color:var(--gold)}
@@ -738,8 +749,11 @@ if ($logged) {
               <span class="muted" id="uf-summary" style="margin:0"></span>
               <span class="sp"></span>
               <button type="button" class="ghost" id="btn-tab">نمای جدول</button>
+              <button type="button" class="ghost" id="btn-cleantext" title="متن یکدست‌شده در کادر می‌آید">متن پاک‌شده</button>
             </div>
+            <div id="uf-meta" class="uf-meta" style="display:none"></div>
             <div id="uf-issues"></div>
+            <div id="uf-suggest" class="uf-suggest" style="display:none"></div>
             <div id="uf-table-wrap">
               <table id="uf-table">
                 <thead><tr>
@@ -882,6 +896,10 @@ if ($logged) {
     meta.textContent = "";
   }
 
+  function faNumInline(s) {
+    var d = "۰۱۲۳۴۵۶۷۸۹";
+    return String(s || "").replace(/[0-9]/g, function (c) { return d.charAt(+c); });
+  }
   function faNum(n) {
     var d = "۰۱۲۳۴۵۶۷۸۹";
     return String(n == null ? 0 : n).replace(/[0-9]/g, function (c) { return d.charAt(+c); });
@@ -908,9 +926,29 @@ if ($logged) {
     ufBox.style.display = "block";
     var conf = Number(u.confidence || 0);
     var sum = Number((u.totals || {}).items_sum || 0);
-    ufSummary.innerHTML = faNum(u.items.length) + " قلم · اعتماد "
+    var q = u.quality || null;
+    var gradeClass = q ? ({ A: "qA", B: "qB", C: "qC", D: "qD" }[q.grade] || "qD") : "";
+    ufSummary.innerHTML =
+      (q ? '<span class="qbadge ' + gradeClass + '" title="' + escHtml(q.advice) + '">'
+           + 'کیفیت ' + escHtml(q.grade) + "</span> " : "")
+      + faNum(u.items.length) + " قلم · اعتماد "
       + '<b class="ltr">' + faNum(conf) + "٪</b> · جمع "
       + '<b class="ltr">' + money(sum) + "</b>";
+
+    // فرادادهٔ سند: تاریخ، شماره، واحد پول، نرخ مالیات
+    var meta = u.meta || {};
+    var metaBits = [];
+    if (meta.date) metaBits.push("تاریخ " + faNumInline(meta.date));
+    if (meta.number) metaBits.push("شماره " + escHtml(meta.number));
+    if (meta.currency && meta.currency.code !== "IRR") {
+      metaBits.push("واحد " + escHtml(meta.currency.label || meta.currency.code));
+    }
+    if (meta.tax_rate) metaBits.push("مالیات " + faNum(meta.tax_rate) + "٪");
+    var metaEl = document.getElementById("uf-meta");
+    if (metaEl) {
+      metaEl.innerHTML = metaBits.length ? metaBits.join(" · ") : "";
+      metaEl.style.display = metaBits.length ? "block" : "none";
+    }
 
     var rows = u.items.map(function (it, i) {
       var fixed = it.note ? ' title="' + escHtml(it.note) + '"' : "";
@@ -936,6 +974,14 @@ if ($logged) {
       return '<tr><td colspan="5" class="uf-tlabel">' + escHtml(r[0])
         + '</td><td class="ltr">' + r[1] + "</td></tr>";
     }).join("");
+
+    // پیشنهادهای عملی برای خوانش بهتر
+    var sugEl = document.getElementById("uf-suggest");
+    var sugs = (lastJob && lastJob.suggestions) || [];
+    if (sugEl) {
+      sugEl.innerHTML = sugs.length ? sugs.map(function (s) { return "💡 " + escHtml(s); }).join("<br>") : "";
+      sugEl.style.display = sugs.length ? "block" : "none";
+    }
 
     var issues = u.issues || [];
     ufIssues.innerHTML = issues.length
@@ -1178,6 +1224,20 @@ if ($logged) {
     if (!lastJob || !lastJob.id) { return ""; }
     return "?api=file&f=" + kind + "&id=" + encodeURIComponent(lastJob.id);
   }
+
+  var btnClean = document.getElementById("btn-cleantext");
+  if (btnClean) btnClean.addEventListener("click", function () {
+    if (!lastJob) return;
+    // متن پاک‌شدهٔ موتور را در کادر می‌گذارد (قابل ویرایش و کپی)
+    textBox.value = lastJob.text_clean || lastJob.text || "";
+    ufMode = "text";
+    paintUfMode();
+    var hint = document.getElementById("txthint");
+    if (hint) {
+      hint.textContent = "متن پاک‌شده در کادر آمد — قابل ویرایش و کپی.";
+      hint.style.display = "block";
+    }
+  });
 
   btnTab.addEventListener("click", function () {
     ufMode = ufMode === "table" ? "text" : "table";

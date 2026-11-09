@@ -2,14 +2,14 @@
 
 همهٔ لینک‌ها مستقیم و بدون ورود به حساب کار می‌کنند.
 
-## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۳۴ کیلوبایت)
+## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۶۸ کیلوبایت)
 
 **دانلود:**
 https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-php-htdocs.zip
 
 **نصب (۳۰ ثانیه):**
 
-1. فایل زیپ را باز کنید → یک پوشهٔ `faktorkhan` با ۹ فایل
+1. فایل زیپ را باز کنید → یک پوشهٔ `faktorkhan` با ۱۱ فایل
 2. کل پوشه را در `C:\wamp64\www\` بگذارید (یعنی `C:\wamp64\www\faktorkhan\`)
 3. `http://localhost/faktorkhan/` را در مرورگر باز کنید
 4. گذرواژهٔ محلی بسازید → توکن را بچسبانید → **تست اعتبار** → فایل را آپلود کنید
@@ -27,6 +27,13 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 > **موتور دوم هوش مصنوعی (اختیاری)** برای فاکتور دست‌نویس و عکس تار: کلید را
 > در همان صفحه ثبت کنید. اگر سرویس ابری خالی برگرداند، خودکار موتور دوم
 > امتحان می‌شود — بدون آپلود دوباره و بدون مصرف اعتبار اضافه.
+>
+> **🧠 موتور فهم اقلام:** بعد از هر خوانش، خودِ برنامه متن را می‌فهمد و
+> **جدول اقلام** (شرح، تعداد، واحد، قیمت واحد، مبلغ) با جمع‌ها می‌سازد.
+> اگر تعداد × قیمت با مبلغ نخواند، اصلاح می‌کند و می‌گوید کدام عدد از چه
+> به چه عوض شد. تاریخ شمسی، شمارهٔ فاکتور، تومان/ریال و نرخ مالیات هم
+> خودکار تشخیص داده می‌شوند. فهرست ۹۰ کار موتور:
+> [`docs/ENGINE-90-FA.md`](../docs/ENGINE-90-FA.md)
 >
 > روی ویندوز ۷ هم کار می‌کند (فقط PHP 7.4+ با افزونهٔ curl).
 > راهنمای کامل: [`docs/PHP-HTTPDOCKS-FA.md`](../docs/PHP-HTTPDOCKS-FA.md)
@@ -46,7 +53,7 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 
 ---
 
-## ۳) کد منبع کامل (۵۳۷ کیلوبایت)
+## ۳) کد منبع کامل (۶۸۱ کیلوبایت)
 
 **دانلود:**
 https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
@@ -81,6 +88,6 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 
 | فایل | حجم | برای |
 |---|---|---|
-| `faktorkhan-php-htdocs.zip` | ۵۵ KB | WAMP / XAMPP — ۱۰ فایل (ویندوز ۷ ✅) |
+| `faktorkhan-php-htdocs.zip` | ۶۸ KB | WAMP / XAMPP — ۱۱ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۵۸۶ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۶۸۱ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
