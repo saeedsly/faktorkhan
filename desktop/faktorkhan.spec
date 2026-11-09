@@ -26,7 +26,7 @@ hiddenimports = [
     "app.routers.ocr", "app.routers.admin", "app.routers.system",
     "app.services.cloud_ocr", "app.services.local_ocr", "app.services.jobs",
     "app.services.parser", "app.services.exporter", "app.services.config_store",
-    "passlib.handlers.pbkdf2", "sqlalchemy.dialects.sqlite", "sqlalchemy.dialects.mysql",
+    "sqlalchemy.dialects.sqlite", "sqlalchemy.dialects.mysql",
     "pymysql", "pypdf", "openpyxl", "httpx", "cryptography", "jwt",
 ]
 

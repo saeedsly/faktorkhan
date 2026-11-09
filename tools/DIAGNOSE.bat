@@ -31,7 +31,7 @@ echo. بررسی کتابخانه‌ها:
 "%PYRUN%" -c "import fastapi, uvicorn, starlette, pydantic; print('  web  ok', fastapi.__version__)"
 "%PYRUN%" -c "import sqlalchemy; print('  db   ok', sqlalchemy.__version__)"
 "%PYRUN%" -c "import cryptography; print('  crypto ok', cryptography.__version__)"
-"%PYRUN%" -c "import jwt, passlib, multipart, httpx, openpyxl, pypdf; print('  misc ok')"
+"%PYRUN%" -c "import jwt, cryptography, multipart, httpx, openpyxl, pypdf; print('  misc ok')"
 
 echo. >> "%REPORT%"
 "%PYRUN%" -c "import sys; print('exe:', sys.executable); print('version:', sys.version)" >> "%REPORT%" 2>&1
