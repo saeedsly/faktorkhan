@@ -87,6 +87,18 @@ class Settings:
     CLOUD_OCR_SEED_TOKEN: str = os.getenv("CLOUD_OCR_SEED_TOKEN", "").strip()
     CLOUD_OCR_VERIFY_TLS: bool = _bool("CLOUD_OCR_VERIFY_TLS", True)
 
+    # --- موتور هوش مصنوعی (فهم اقلام و اصلاح اعداد) -------------------
+    # اختیاری است: اگر کلید خالی باشد فقط موتور قاعده‌محور کار می‌کند.
+    AI_ITEMS_ENABLED: bool = _bool("AI_ITEMS_ENABLED", True)
+    AI_ITEMS_KEY: str = os.getenv("AI_ITEMS_KEY", "").strip()
+    AI_ITEMS_MODEL: str = os.getenv("AI_ITEMS_MODEL", "gemini-2.0-flash").strip()
+    AI_ITEMS_TIMEOUT: int = _int("AI_ITEMS_TIMEOUT", 120)
+    AI_ITEMS_MAX_ITEMS: int = _int("AI_ITEMS_MAX_ITEMS", 200)
+    # اگر خروجی هوش مصنوعی از این کمتر مطمئن بود، به قاعده‌محور برمی‌گردیم
+    AI_ITEMS_MIN_CONFIDENCE: int = _int("AI_ITEMS_MIN_CONFIDENCE", 35)
+    # اصلاح خودکار اعداد ناسازگار (تعداد × قیمت ≠ مبلغ کل)
+    AI_ITEMS_AUTOFIX: bool = _bool("AI_ITEMS_AUTOFIX", True)
+
     # --- ثبت‌نام و اشتراک ---------------------------------------------
     ALLOW_REGISTRATION: bool = _bool("ALLOW_REGISTRATION", True)
     REQUIRE_LICENSE: bool = _bool("REQUIRE_LICENSE", True)

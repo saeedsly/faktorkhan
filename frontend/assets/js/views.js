@@ -382,9 +382,9 @@ const Views = (() => {
       const btn = $("#parse-text-btn", el);
       UI.setBusy(btn, true, "تحلیل…");
       try {
-        const { parsed } = await API.parseText(text, draft.invoiceType);
+        const understood = await API.understand(text, draft.invoiceType, true);
         UI.setBusy(btn, false);
-        renderReview({ parsed, text, jobId: null });
+        renderReview({ parsed: understood.parsed, text, jobId: null, understood });
       } catch (err) {
         UI.setBusy(btn, false);
         toast(err.message, { type: "error" });
@@ -445,11 +445,32 @@ const Views = (() => {
     }
 
     /* --- فرم بازبینی و ثبت --- */
-    function renderReview({ parsed, text, jobId, job }) {
+    function renderReview({ parsed, text, jobId, job, understood }) {
       const p = parsed || {};
       const conf = Number(p.confidence || 0);
       const body = $("#scan-status-body", el);
-      const items = (p.items || []).map((it) => ({ ...it }));
+      // اگر موتور فهم اقلام جواب داده، اقلام و جمع‌هایش مرجع‌اند
+      const u = understood || null;
+      const items = ((u && u.items && u.items.length ? u.items : p.items) || []).map((it) => ({ ...it }));
+      if (u) {
+        if (u.parsed) {
+          p.number = p.number || u.parsed.number;
+          p.issue_date = p.issue_date || u.parsed.issue_date;
+          p.seller_name = p.seller_name || u.parsed.seller_name;
+          p.buyer_name = p.buyer_name || u.parsed.buyer_name;
+        }
+        if (u.meta) {
+          p.seller_name = p.seller_name || u.meta.seller;
+          p.buyer_name = p.buyer_name || u.meta.buyer;
+          p.number = p.number || u.meta.number;
+          p.issue_date = p.issue_date || u.meta.date;
+        }
+        const t = u.totals || {};
+        if (t.subtotal) p.subtotal = t.subtotal;
+        if (t.tax) p.tax = t.tax;
+        if (t.discount) p.discount = t.discount;
+        if (t.total) p.total = t.total;
+      }
       body.innerHTML = `
         <div class="confidence">
           ${ring(conf, { color: conf >= 75 ? "#34d399" : conf >= 50 ? "#fbbf24" : "#f87171" })}
@@ -458,6 +479,22 @@ const Views = (() => {
         </div>
         ${(p.warnings || []).length ? `<div class="warn-list">${p.warnings.map((w) =>
           `<div class="warn-item"><svg class="ic"><use href="#i-info"/></svg><span>${esc(w)}</span></div>`).join("")}</div>` : ""}
+        ${u && u.items && u.items.length ? `<div class="card tight" style="display:flex;gap:10px;align-items:flex-start;border-right:3px solid #8b7cf6;background:rgba(139,124,246,.07)">
+          <svg class="ic" style="flex:none;margin-top:2px"><use href="#i-sparkles"/></svg>
+          <div style="flex:1">
+            <strong style="font-size:12.5px">موتور فهم اقلام ${num(u.item_count || u.items.length)} قلم را خودش تشخیص داد</strong>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px">
+              ${u.engine && u.engine !== "rules" ? "خوانده‌شده از تصویر با هوش مصنوعی" : "از روی متن با قواعد هوشمند"}
+              ${u.autofix && u.autofix.length ? ` • ${num(u.autofix.length)} رقم اصلاح شد` : ""}
+              ${u.fallback ? ` • ${esc(u.fallback)}` : ""}
+            </div>
+          </div>
+          <span class="pill" style="background:rgba(139,124,246,.15);color:#a78bfa;font-size:10.5px">${num(u.confidence)}٪</span>
+        </div>` : ""}
+        ${u && (u.issues || []).length ? `<div class="warn-list mt-12">${u.issues.map((w) =>
+          `<div class="warn-item"><svg class="ic"><use href="#i-info"/></svg><span>${esc(w.message || w)}</span></div>`).join("")}
+          <button class="btn sm ghost" id="fix-numbers" style="margin-top:6px">
+            <svg class="ic"><use href="#i-check"/></svg>اصلاح خودکار اعداد</button></div>` : ""}
         <div class="grid-2 mt-12">
           <label class="field"><span>شماره فاکتور</span><input id="rv-number" value="${esc(p.number || "")}"></label>
           <label class="field"><span>تاریخ (شمسی)</span><input id="rv-date" value="${esc(p.issue_date || "")}" dir="ltr" placeholder="1404/08/12"></label>
@@ -491,7 +528,7 @@ const Views = (() => {
           <span class="i-qty">تعداد</span><span class="i-unit">واحد</span>
           <span class="i-unit-price">قیمت واحد</span><span>مبلغ</span><span></span></div>` +
           items.map((it, i) => `<div class="item-row" data-row="${i}">
-            <span class="i-idx">${num(i + 1)}</span>
+            <span class="i-idx" title="${it.engine === "ai" ? "خوانده‌شده با هوش مصنوعی" : it.engine === "rules" ? "استخراج با قواعد" : "ورودی دستی"}">${num(i + 1)}${it.engine === "ai" ? `<b style="color:#a78bfa">✦</b>` : ""}</span>
             <input data-f="description" value="${esc(it.description || "")}">
             <input data-f="qty" class="i-qty" value="${it.qty || 1}" dir="ltr">
             <input data-f="unit" class="i-unit" value="${esc(it.unit || "عدد")}">
@@ -513,6 +550,38 @@ const Views = (() => {
       };
       paintItems();
 
+      const fixBtn = $("#fix-numbers", el);
+      if (fixBtn) fixBtn.onclick = async () => {
+        UI.setBusy(fixBtn, true, "اصلاح…");
+        try {
+          const res = await API.fixNumbers(
+            items.map((it, i) => ({ ...it, row_no: i + 1 })),
+            {
+              subtotal: Number($("#rv-subtotal", el).value || 0),
+              tax: Number($("#rv-tax", el).value || 0),
+              discount: Number($("#rv-discount", el).value || 0),
+              total: Number($("#rv-total", el).value || 0),
+            },
+          );
+          items.length = 0;
+          (res.items || []).forEach((it) => items.push(it));
+          $("#rv-subtotal", el).value = res.totals.subtotal || 0;
+          $("#rv-total", el).value = res.totals.total || 0;
+          paintItems();
+          UI.setBusy(fixBtn, false);
+          toast(res.changes && res.changes.length
+            ? `${num(res.changes.length)} رقم اصلاح شد`
+            : "همهٔ اعداد درست بودند", { type: "success" });
+          if (fixBtn.parentElement) {
+            const box = fixBtn.parentElement;
+            box.querySelectorAll(".warn-item").forEach((n) => n.remove());
+            if (!res.issues || !res.issues.length) fixBtn.remove();
+          }
+        } catch (err) {
+          UI.setBusy(fixBtn, false);
+          toast(err.message, { type: "error" });
+        }
+      };
       $("#add-item", el).onclick = () => {
         items.push({ row_no: items.length + 1, description: "", qty: 1, unit: "عدد", unit_price: 0, total: 0 });
         paintItems();
@@ -539,7 +608,15 @@ const Views = (() => {
           invoice_type: (p.invoice_type || draft.invoiceType),
           source: jobId ? (job && job.provider) || draft.engine : "manual",
           ocr_text: text || "",
-          items: items.map((it, i) => ({ ...it, row_no: i + 1 })),
+          items: items.map((it, i) => ({
+            ...it,
+            row_no: i + 1,
+            engine: it.engine === "ai" || it.engine === "rules" ? it.engine : "manual",
+            ai_confidence: Number(it.ai_confidence || 0),
+          })),
+          items_engine: u ? (u.engine === "rules" ? "rules" : "ai") : "",
+          items_confidence: u ? Number(u.confidence || 0) : 0,
+          items_autofixed: u && u.autofix ? u.autofix.length : 0,
         };
         UI.setBusy(e.currentTarget, true, "ثبت…");
         try {

@@ -14,6 +14,8 @@
  *   درخواست انجام می‌شود (کمتر از چند ثانیه) و پیگیری وضعیت در درخواست‌های
  *   کوتاه بعدی. مرورگر با AJAX هر ۳ ثانیه وضعیت را می‌پرسد.
  */
+require_once __DIR__ . '/engine.php';   // موتور پاکسازی و فهم متن فاکتور
+
 
 declare(strict_types=1);
 
@@ -1824,6 +1826,22 @@ function job_finish_text(array $job, string $text): array
 {
     if ($text !== '') {
         $job['text'] = $text;
+        /* موتور متن را می‌فهمد: نویسه‌ها یکدست، اقلام استخراج و اعداد بازبینی می‌شوند */
+        if (function_exists('fk_understand')) {
+            try {
+                $u = fk_understand($text);
+                $job['understood'] = array(
+                    'items' => $u['items'],
+                    'totals' => $u['totals'],
+                    'issues' => $u['issues'],
+                    'confidence' => $u['confidence'],
+                    'item_count' => $u['item_count'],
+                    'cleaned' => fk_canonical_numbers(fk_norm_chars($text)),
+                );
+            } catch (Throwable $e) {
+                $job['understood'] = array('error' => 'engine: ' . $e->getMessage());
+            }
+        }
     }
     $job['status'] = 'done';
     $job['stage'] = 'done';

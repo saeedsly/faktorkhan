@@ -145,6 +145,11 @@ const API = (() => {
     invoiceStats: () => request("/api/invoices/stats"),
     invoicePrint: (id) => request(`/api/invoices/${id}/print`),
     parseText: (text, invoice_type) => request("/api/invoices/parse", { method: "POST", body: { text, invoice_type } }),
+    understand: (text, invoice_type, autofix = true) =>
+      request("/api/invoices/understand", { method: "POST", body: { text, invoice_type, autofix } }),
+    understandImage: (payload) => request("/api/invoices/understand-image", { method: "POST", body: payload || {} }),
+    fixNumbers: (items, totals, apply_to) =>
+      request("/api/invoices/fix-numbers", { method: "POST", body: { items, totals, apply_to } }),
     exportUrl: (format, params) => `/api/invoices/export${qs({ format, ...(params || {}) })}`,
 
     /* --- OCR --- */

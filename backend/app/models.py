@@ -187,6 +187,12 @@ class Invoice(Base):
     job_id: Mapped[int | None] = mapped_column(ForeignKey("ocr_jobs.id"), nullable=True)
     duplicate_of: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # نتیجهٔ موتور فهم اقلام
+    items_engine: Mapped[str] = mapped_column(String(24), default="")     # rules|ai|mix
+    items_confidence: Mapped[int] = mapped_column(Integer, default=0)     # 0..100
+    items_issues: Mapped[list | None] = mapped_column(JSON, default=list) # اشکال‌های عددی یافت‌شده
+    items_autofixed: Mapped[int] = mapped_column(Integer, default=0)      # چند رقم خودکار اصلاح شد
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -210,6 +216,12 @@ class InvoiceItem(Base):
     discount: Mapped[int] = mapped_column(Integer, default=0)
     tax_rate: Mapped[int] = mapped_column(Integer, default=0)
     total: Mapped[int] = mapped_column(Integer, default=0)
+
+    # متادیتای فهم خودکار: کدام موتور این سطر را خواند و چقدر مطمئن بود
+    engine: Mapped[str] = mapped_column(String(24), default="manual")     # manual|rules|ai
+    ai_confidence: Mapped[int] = mapped_column(Integer, default=0)        # 0..100
+    verified: Mapped[int] = mapped_column(Integer, default=0)            # 0|1 تأیید دستی کاربر
+    note: Mapped[str] = mapped_column(String(200), default="")           # توضیح اصلاح خودکار
 
     invoice: Mapped[Invoice] = relationship("Invoice", back_populates="items")
 

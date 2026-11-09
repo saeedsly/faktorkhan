@@ -106,6 +106,10 @@ def invoice_public(inv: Invoice, with_items: bool = True, with_text: bool = Fals
         "duplicate_of": inv.duplicate_of,
         "job_id": inv.job_id,
         "items_count": len(inv.items or []),
+        "items_engine": inv.items_engine or "",
+        "items_confidence": inv.items_confidence or 0,
+        "items_autofixed": inv.items_autofixed or 0,
+        "items_issues": inv.items_issues or [],
     }
     if with_items:
         data["items"] = [
@@ -120,6 +124,10 @@ def invoice_public(inv: Invoice, with_items: bool = True, with_text: bool = Fals
                 "discount": i.discount,
                 "tax_rate": i.tax_rate,
                 "total": i.total,
+                "engine": i.engine or "manual",
+                "ai_confidence": i.ai_confidence or 0,
+                "verified": i.verified or 0,
+                "note": i.note or "",
             }
             for i in (inv.items or [])
         ]

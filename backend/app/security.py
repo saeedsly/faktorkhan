@@ -10,22 +10,68 @@ from typing import Any
 
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
-from passlib.context import CryptContext
 
 from .config import settings
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-
 # ------------------------------------------------------------ رمز عبور
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+#
+# پیش‌تر از passlib استفاده می‌شد. passlib از ۲۰۲۰ به بعد نگه‌داری نمی‌شود و
+# روی پایتون ۳.۱۳ (که در ویندوز ۱۰ به‌سادگی نصب می‌شود) با خطای
+# «crypt is deprecated» از کار می‌افتد. این‌جا همان الگوریتم
+# pbkdf2_sha256 را با hashlib استاندارد پیاده کرده‌ایم تا:
+#   • هیچ وابستگی خارجی لازم نباشد،
+#   • هش‌های قدیمی که passlib ساخته بود همچنان معتبر بمانند.
+
+PBKDF2_ROUNDS = 29000          # همان عددی که passlib استفاده می‌کرد
+PBKDF2_PREFIX = "$pbkdf2-sha256$"
+
+
+def _b64_crypt(data: bytes) -> str:
+    """base64 سازگار با passlib: «+/» به «.» تبدیل می‌شود و = حذف می‌شود."""
+    return base64.b64encode(data).decode("ascii").rstrip("=").replace("+", ".")
+
+
+def _b64_crypt_decode(text: str) -> bytes:
+    raw = text.replace(".", "+")
+    raw += "=" * (-len(raw) % 4)
+    return base64.b64decode(raw)
+
+
+def hash_password(password: str, rounds: int = PBKDF2_ROUNDS) -> str:
+    """هش رمز با قالب دقیقاً یکسان با passlib (سازگاری با کاربران موجود)."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds, 32)
+    return f"{PBKDF2_PREFIX}{rounds}${_b64_crypt(salt)}${_b64_crypt(digest)}"
 
 
 def verify_password(password: str, hashed: str) -> bool:
+    """بررسی رمز؛ هش‌های قدیمی passlib و هش‌های تازه هر دو پذیرفته می‌شوند."""
+    if not hashed or not password:
+        return False
     try:
-        return pwd_context.verify(password, hashed)
+        if hashed.startswith(PBKDF2_PREFIX):
+            _, _, rounds_s, salt_s, digest_s = hashed.split("$")
+            rounds = int(rounds_s)
+            salt = _b64_crypt_decode(salt_s)
+            expected = _b64_crypt_decode(digest_s)
+            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds, len(expected))
+            return hmac.compare_digest(actual, expected)
+        # قالب‌های دیگر (مثلاً bcrypt قدیمی) → تلاش با passlib فقط اگر نصب باشد
+        from passlib.context import CryptContext  # noqa: PLC0415
+        return CryptContext(schemes=["bcrypt", "pbkdf2_sha256"]).verify(password, hashed)
     except Exception:
         return False
+
+
+def needs_rehash(hashed: str) -> bool:
+    """آیا این هش با تنظیمات فعلی ساخته نشده و باید بازسازی شود؟"""
+    if not hashed.startswith(PBKDF2_PREFIX):
+        return True
+    try:
+        rounds = int(hashed.split("$")[2])
+    except (IndexError, ValueError):
+        return True
+    return rounds < PBKDF2_ROUNDS
 
 
 # ------------------------------------------------------------ JWT

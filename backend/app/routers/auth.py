@@ -22,6 +22,7 @@ from ..schemas import ChangePasswordIn, LoginIn, ProfileIn, RegisterIn
 from ..security import (
     create_access_token,
     hash_password,
+    needs_rehash,
     license_key_is_wellformed,
     normalize_license_key,
     verify_password,
@@ -148,6 +149,9 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
 
     user.failed_attempts = 0
     user.locked_until = None
+    # هش قدیمی (مثلاً از نسخهٔ قبل) بی‌صدا با الگوریتم فعلی بازسازی می‌شود
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(payload.password)
     user.last_login_at = now
     user.last_ip = client_ip(request)
     db.add(user)

@@ -4,7 +4,6 @@ SQLAlchemy>=2.0
 PyMySQL>=1.1
 PyJWT>=2.8
 cryptography>=42
-passlib>=1.7
 python-multipart>=0.0.9
 openpyxl>=3.1
 pypdf>=5.0

@@ -81,6 +81,8 @@ if ($api !== '') {
                 'out_kind' => (string) ($job['out_kind'] ?? ''),
                 'docx_rebuilt' => !empty($job['docx_rebuilt']),
                 'engine' => (string) ($job['engine'] ?? 'cloud'),
+                'understood' => isset($job['understood']) && is_array($job['understood'])
+                    ? $job['understood'] : null,
                 'cleanup' => !empty($job['cleanup_pending']),
                 'real_progress' => !empty($job['real_progress']),
                 'slow' => !empty($job['slow']),
@@ -505,6 +507,25 @@ if ($logged) {
   .textbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 8px}
   .textbar button{padding:7px 12px;font-size:12px;font-weight:600}
   .textbar .sp{flex:1}
+  /* ── موتور فهم اقلام ── */
+  .ufhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .ufhead strong{font-size:13px;color:var(--gold)}
+  .ufhead .sp{flex:1}
+  .ufhead button{padding:6px 11px;font-size:11.5px}
+  #uf-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+  #uf-table{width:100%;border-collapse:collapse;font-size:12px}
+  #uf-table th{background:rgba(255,255,255,.04);color:var(--dim);font-weight:600;
+    text-align:right;padding:8px 9px;white-space:nowrap;border-bottom:1px solid var(--line)}
+  #uf-table td{padding:7px 9px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
+  #uf-table tbody tr:hover{background:rgba(255,255,255,.025)}
+  #uf-table .uf-desc{max-width:340px;word-break:break-word}
+  #uf-table tfoot td{background:rgba(255,255,255,.03);font-weight:600;border-bottom:none}
+  #uf-table .uf-tlabel{text-align:left;color:var(--dim);font-weight:600}
+  .uf-old{color:#f87171;opacity:.75;font-size:11px}
+  .uf-warn{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);
+    color:#fbbf24;border-radius:9px;padding:9px 11px;font-size:12px;margin-bottom:9px;line-height:1.9}
+  .uf-ok{background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.28);
+    color:#34d399;border-radius:9px;padding:8px 11px;font-size:12px;margin-bottom:9px}
   .ltr{direction:ltr;text-align:left;font-family:ui-monospace,monospace}
   .foot{color:#5d6779;font-size:11px;text-align:center;margin:20px 0 10px}
   a{color:var(--gold)}
@@ -711,6 +732,25 @@ if ($logged) {
             <button type="button" class="ghost" id="btn-doc">دانلود Word</button>
             <button type="button" class="ghost danger" id="btn-del" style="display:none">حذف فایل‌ها</button>
           </div>
+          <div id="understood" style="display:none;margin-top:14px">
+            <div class="ufhead">
+              <strong>🧠 موتور فهم اقلام</strong>
+              <span class="muted" id="uf-summary" style="margin:0"></span>
+              <span class="sp"></span>
+              <button type="button" class="ghost" id="btn-tab">نمای جدول</button>
+            </div>
+            <div id="uf-issues"></div>
+            <div id="uf-table-wrap">
+              <table id="uf-table">
+                <thead><tr>
+                  <th>#</th><th>شرح کالا / خدمت</th><th>تعداد</th><th>واحد</th>
+                  <th>قیمت واحد</th><th>مبلغ</th>
+                </tr></thead>
+                <tbody></tbody>
+                <tfoot></tfoot>
+              </table>
+            </div>
+          </div>
           <textarea id="text" spellcheck="false" placeholder="متن خوانده‌شده این‌جا می‌آید…"></textarea>
           <p class="muted" id="saved" style="display:none"></p>
           <p class="muted" id="txthint" style="display:none">
@@ -789,6 +829,13 @@ if ($logged) {
   var textBox = document.getElementById("text");
   var textInfo = document.getElementById("textinfo");
   var txtHint = document.getElementById("txthint");
+  var ufBox = document.getElementById("understood");
+  var ufSummary = document.getElementById("uf-summary");
+  var ufIssues = document.getElementById("uf-issues");
+  var ufTable = document.getElementById("uf-table");
+  var ufTableWrap = document.getElementById("uf-table-wrap");
+  var btnTab = document.getElementById("btn-tab");
+  var ufMode = "table";
   var btnCopy = document.getElementById("btn-copy");
   var btnTxt = document.getElementById("btn-txt");
   var btnDoc = document.getElementById("btn-doc");
@@ -835,6 +882,78 @@ if ($logged) {
     meta.textContent = "";
   }
 
+  function faNum(n) {
+    var d = "۰۱۲۳۴۵۶۷۸۹";
+    return String(n == null ? 0 : n).replace(/[0-9]/g, function (c) { return d.charAt(+c); });
+  }
+  function money(n) {
+    var v = Math.round(Number(n) || 0);
+    return faNum(String(Math.abs(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")) + (v < 0 ? "-" : "");
+  }
+  function escHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  /**
+   * خروجی موتور فهم اقلام را نشان می‌دهد: جدول اقلام + جمع‌ها + اشکال‌ها.
+   * ufMode = "table" یا "text" — با دکمهٔ «نمای جدول» عوض می‌شود.
+   */
+  function paintUnderstood(u) {
+    if (!u || !u.items || !u.items.length) {
+      ufBox.style.display = "none";
+      return;
+    }
+    ufBox.style.display = "block";
+    var conf = Number(u.confidence || 0);
+    var sum = Number((u.totals || {}).items_sum || 0);
+    ufSummary.innerHTML = faNum(u.items.length) + " قلم · اعتماد "
+      + '<b class="ltr">' + faNum(conf) + "٪</b> · جمع "
+      + '<b class="ltr">' + money(sum) + "</b>";
+
+    var rows = u.items.map(function (it, i) {
+      var fixed = it.note ? ' title="' + escHtml(it.note) + '"' : "";
+      return "<tr" + fixed + ">"
+        + "<td>" + faNum(i + 1) + "</td>"
+        + '<td class="uf-desc">' + escHtml(it.description) + "</td>"
+        + '<td class="ltr">' + faNum(it.qty) + "</td>"
+        + "<td>" + escHtml(it.unit || "") + "</td>"
+        + '<td class="ltr">' + money(it.unit_price) + "</td>"
+        + '<td class="ltr">' + (it.original_total ? '<s class="uf-old">' + money(it.original_total) + "</s> " : "")
+        + money(it.total) + "</td>"
+        + "</tr>";
+    }).join("");
+    ufTable.querySelector("tbody").innerHTML = rows;
+
+    var t = u.totals || {};
+    var footRows = [];
+    if (t.subtotal) footRows.push(["جمع اقلام", money(t.subtotal)]);
+    if (t.discount) footRows.push(["تخفیف", money(t.discount)]);
+    if (t.tax) footRows.push(["مالیات", money(t.tax)]);
+    if (t.total) footRows.push(["مبلغ کل", money(t.total)]);
+    ufTable.querySelector("tfoot").innerHTML = footRows.map(function (r) {
+      return '<tr><td colspan="5" class="uf-tlabel">' + escHtml(r[0])
+        + '</td><td class="ltr">' + r[1] + "</td></tr>";
+    }).join("");
+
+    var issues = u.issues || [];
+    ufIssues.innerHTML = issues.length
+      ? '<div class="uf-warn">' + issues.map(function (w) {
+          return "⚠ " + escHtml(typeof w === "string" ? w : (w.message || ""));
+        }).join("<br>") + "</div>"
+      : '<div class="uf-ok">✓ همهٔ اعداد با هم می‌خوانند</div>';
+
+    paintUfMode();
+  }
+
+  function paintUfMode() {
+    var tableOn = ufMode === "table";
+    ufTableWrap.style.display = tableOn ? "block" : "none";
+    textBox.style.display = tableOn ? "none" : "block";
+    btnTab.textContent = tableOn ? "نمای متن" : "نمای جدول";
+  }
+
   function paint(job) {
     nameEl.textContent = job.name || "";
     msg.textContent = job.message || "";
@@ -868,6 +987,7 @@ if ($logged) {
       btnDoc.style.display = job.saved ? "inline-block" : "none";
       btnDel.style.display = (job.saved || job.txt_file) ? "inline-block" : "none";
       txtHint.style.display = hasText ? "block" : "none";
+      paintUnderstood(job.understood);
       if (job.saved) {
         savedEl.style.display = "block";
         savedEl.innerHTML = 'فایل Word هم ساخته شد (<b class="ltr">'
@@ -1058,6 +1178,11 @@ if ($logged) {
     if (!lastJob || !lastJob.id) { return ""; }
     return "?api=file&f=" + kind + "&id=" + encodeURIComponent(lastJob.id);
   }
+
+  btnTab.addEventListener("click", function () {
+    ufMode = ufMode === "table" ? "text" : "table";
+    paintUfMode();
+  });
 
   btnCopy.addEventListener("click", function () {
     var text = textBox.value || "";

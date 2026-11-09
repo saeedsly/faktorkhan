@@ -9,13 +9,17 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..deps import audit, get_current_user, require_active_subscription
 from ..jalali import today_jalali
-from ..models import Invoice, InvoiceItem, User, utcnow
+from ..models import Invoice, InvoiceItem, OcrJob, User, utcnow
 from ..schemas import InvoiceIn
 from ..serializers import invoice_public
 from ..services import exporter
+from ..services.ai_parser import (
+    _find_issues as _find_issues_public, extract_items_ai, extract_items_rules, fix_numbers,
+)
 from ..services.parser import parse_invoice
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -44,6 +48,10 @@ def _apply_items(db: Session, invoice: Invoice, items_in: list) -> None:
             discount=item.discount or 0,
             tax_rate=item.tax_rate or 0,
             total=total,
+            engine=getattr(item, "engine", "manual") or "manual",
+            ai_confidence=int(getattr(item, "ai_confidence", 0) or 0),
+            verified=1 if getattr(item, "verified", False) else 0,
+            note=(getattr(item, "note", "") or "")[:200],
         ))
 
 
@@ -229,6 +237,243 @@ def parse_text(payload: dict, user: User = Depends(get_current_user)):
     return {"parsed": parse_invoice(text, payload.get("invoice_type"))}
 
 
+# ═══════════════════ فهم خودکار اقلام با هوش مصنوعی ═══════════════════
+
+def _item_payload(items: list[dict], engine: str) -> list[dict]:
+    """آماده‌سازی اقلام برای ارسال به رابط کاربری."""
+    out = []
+    for idx, it in enumerate(items, start=1):
+        out.append({
+            "row_no": idx,
+            "code": str(it.get("code") or ""),
+            "description": str(it.get("description") or ""),
+            "qty": it.get("qty") or 1,
+            "unit": str(it.get("unit") or "عدد"),
+            "unit_price": int(it.get("unit_price") or 0),
+            "discount": int(it.get("discount") or 0),
+            "tax_rate": int(it.get("tax_rate") or 0),
+            "total": int(it.get("total") or 0),
+            "original_total": int(it.get("original_total") or 0),
+            "engine": engine,
+            "ai_confidence": int(it.get("ai_confidence") or 0),
+            "note": str(it.get("note") or ""),
+        })
+    return out
+
+
+def _merge_result(result: dict, raw_text: str, autofix: bool) -> dict:
+    """
+    خروجی موتور (قاعده‌محور یا هوش مصنوعی) را به یک قرارداد یکسان تبدیل می‌کند،
+    در صورت لزوم اعداد را اصلاح می‌کند و هشدارها را می‌سازد.
+    """
+    items = result.get("items") or []
+    totals = result.get("totals") or {}
+    engine = result.get("engine") or "rules"
+    changes: list[str] = []
+    if autofix and items:
+        items, totals, changes = fix_numbers(items, totals)
+        # توضیح تغییر را روی همان ردیف بگذار، نه با شمارهٔ ترتیبی تغییرات
+        for idx, it in enumerate(items, start=1):
+            if it.get("original_total"):
+                it["note"] = (f"مبلغ کل چاپ‌شده {int(it['original_total']):,} بود؛ "
+                              f"بر اساس تعداد × قیمت به {int(it['total']):,} اصلاح شد.")
+    issues = result.get("issues") or []
+    if changes:
+        # بعد از اصلاح، هشدارهای رفع‌شده نباید باقی بمانند
+        issues = [i for i in issues if i.get("field") != "total"]
+    parsed = parse_invoice(raw_text) if raw_text else {}
+    return {
+        "items": _item_payload(items, engine.split(":")[0]),
+        "totals": totals,
+        "issues": issues,
+        "autofix": changes,
+        "confidence": int(result.get("confidence") or 0),
+        "engine": engine,
+        "meta": result.get("meta") or {},
+        "parsed": parsed,
+        "item_count": len(items),
+        "items_sum": int(totals.get("items_sum") or sum(int(i.get("total") or 0) for i in items)),
+    }
+
+
+def _apply_to_invoice(db: Session, user: User, invoice_id, merged: dict,
+                      engine: str = "ai") -> dict:
+    """اقلام فهمیده‌شده را جایگزین اقلام فاکتور موجود می‌کند."""
+    try:
+        invoice = db.get(Invoice, int(invoice_id))
+    except (TypeError, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "شناسهٔ فاکتور نامعتبر است.")
+    if not invoice or invoice.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "فاکتور پیدا نشد.")
+
+    db.query(InvoiceItem).filter(InvoiceItem.invoice_id == invoice.id).delete()
+    for idx, it in enumerate(merged["items"], start=1):
+        db.add(InvoiceItem(
+            invoice_id=invoice.id, row_no=idx, code=it["code"],
+            description=it["description"], qty=it["qty"], unit=it["unit"],
+            unit_price=it["unit_price"], discount=it["discount"],
+            tax_rate=it["tax_rate"], total=it["total"],
+            engine=engine, ai_confidence=int(merged.get("confidence") or 0),
+            note=(it.get("note") or "")[:200],
+        ))
+    totals = merged.get("totals") or {}
+    invoice.subtotal = int(totals.get("subtotal") or merged.get("items_sum") or 0)
+    invoice.discount = int(totals.get("discount") or 0)
+    invoice.tax = int(totals.get("tax") or 0)
+    invoice.total = int(totals.get("total") or 0)
+    invoice.items_engine = engine
+    invoice.items_confidence = int(merged.get("confidence") or 0)
+    invoice.items_issues = merged.get("issues") or []
+    invoice.items_autofixed = len(merged.get("autofix") or [])
+    meta = merged.get("meta") or {}
+    if meta.get("seller") and not invoice.seller_name:
+        invoice.seller_name = meta["seller"]
+    if meta.get("buyer") and not invoice.buyer_name:
+        invoice.buyer_name = meta["buyer"]
+    if meta.get("number") and not invoice.number:
+        invoice.number = meta["number"]
+    db.commit()
+    db.refresh(invoice)
+    audit(db, user, "invoice_ai_fill", "invoice", invoice.id,
+          f"پر کردن خودکار {len(merged['items'])} قلم با {engine}", None)
+    return {"applied_to": invoice.id, "invoice": invoice_public(invoice)}
+
+
+@router.post("/understand")
+def understand_text(payload: dict, user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """
+    از متن استخراج‌شده، اقلام فاکتور را می‌سازد.
+    body: {"text": "...", "invoice_type": "printed", "autofix": true, "apply_to": <id>}
+    """
+    text = str(payload.get("text", ""))[:200000]
+    if len(text.strip()) < 5:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "متنی برای تحلیل ارسال نشده است.")
+    invoice_type = payload.get("invoice_type")
+    autofix = bool(payload.get("autofix", settings.AI_ITEMS_AUTOFIX))
+    result = extract_items_rules(text, invoice_type)
+    if not result.get("items"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "هیچ قلمی در متن پیدا نشد. متن را واضح‌تر بفرستید یا از عکس استفاده کنید.",
+        )
+    merged = _merge_result(result, text, autofix)
+    merged["engine"] = "rules"
+    apply_to = payload.get("apply_to")
+    if apply_to:
+        merged.update(_apply_to_invoice(db, user, apply_to, merged, engine="rules"))
+    return merged
+
+
+@router.post("/understand-image")
+def understand_image(payload: dict, user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    """
+    تصویر فاکتور را مستقیم به هوش مصنوعی می‌دهد تا خودش اقلام را بفهمد.
+    body: {"job_id": 12}  یا  {"path": "..."}  و اختیاری {"apply_to": <invoice_id>}
+    اگر کلید تنظیم نشده باشد، خطای روشن برمی‌گرداند (نه ۵۰۰).
+    """
+    job_id = payload.get("job_id")
+    image_path = payload.get("path") or ""
+    ocr_text = ""
+    if job_id:
+        job = db.query(OcrJob).filter(OcrJob.id == int(job_id), OcrJob.user_id == user.id).first()
+        if not job:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "کار خوانش پیدا نشد.")
+        image_path = image_path or job.file_path
+        ocr_text = job.text or ""
+    if not image_path:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "مسیر تصویر یا شناسهٔ کار لازم است.")
+
+    key = settings.AI_ITEMS_KEY
+    if not (settings.AI_ITEMS_ENABLED and key):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "موتور هوش مصنوعی فعال نیست. کلید آن را در تنظیمات وارد کنید یا از متن استفاده کنید.",
+        )
+
+    result = extract_items_ai(
+        image_path, api_key=key, model=settings.AI_ITEMS_MODEL,
+        timeout=settings.AI_ITEMS_TIMEOUT,
+    )
+    if not result.get("ok"):
+        # اگر هوش مصنوعی نشد، از متن ابری استفاده کن — کاربر دست‌خالی نمی‌ماند
+        if ocr_text.strip():
+            fallback = extract_items_rules(ocr_text)
+            if fallback.get("items"):
+                merged = _merge_result(fallback, ocr_text, settings.AI_ITEMS_AUTOFIX)
+                merged["fallback"] = result.get("message") or "هوش مصنوعی پاسخ نداد."
+                merged["engine"] = "rules"
+                return merged
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            result.get("message") or "فهم اقلام از تصویر ناموفق بود.")
+
+    merged = _merge_result(result, ocr_text, settings.AI_ITEMS_AUTOFIX)
+    merged["engine"] = settings.AI_ITEMS_MODEL
+
+    apply_to = payload.get("apply_to")
+    if apply_to:
+        merged.update(_apply_to_invoice(db, user, apply_to, merged, engine="ai"))
+    return merged
+
+
+@router.post("/fix-numbers")
+def fix_numbers_endpoint(payload: dict, user: User = Depends(get_current_user)):
+    """
+    اعداد یک فاکتور را بازبینی و اصلاح می‌کند.
+    body: {"items": [...], "totals": {...}, "apply_to": <id>}
+    """
+    items = payload.get("items") or []
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "فهرست اقلام خالی است.")
+    norm_items = []
+    for raw in items[:500]:
+        if not isinstance(raw, dict):
+            continue
+        norm_items.append({
+            "code": str(raw.get("code") or ""),
+            "description": str(raw.get("description") or ""),
+            "qty": raw.get("qty") or 1,
+            "unit": str(raw.get("unit") or "عدد"),
+            "unit_price": int(raw.get("unit_price") or 0),
+            "discount": int(raw.get("discount") or 0),
+            "tax_rate": int(raw.get("tax_rate") or 0),
+            "total": int(raw.get("total") or 0),
+        })
+    totals_in = payload.get("totals") or {}
+    totals = {
+        "subtotal": int(totals_in.get("subtotal") or 0),
+        "discount": int(totals_in.get("discount") or 0),
+        "tax": int(totals_in.get("tax") or 0),
+        "total": int(totals_in.get("total") or 0),
+        "items_sum": sum(int(i["total"]) for i in norm_items),
+    }
+    fixed, out_totals, changes = fix_numbers(norm_items, totals)
+    issues = _find_issues_public(fixed, out_totals)
+
+    apply_to = payload.get("apply_to")
+    if apply_to:
+        invoice = db.get(Invoice, int(apply_to))
+        if not invoice or invoice.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "فاکتور پیدا نشد.")
+        for row, it in zip(invoice.items, fixed):
+            row.total = int(it["total"])
+            row.qty = it["qty"]
+        invoice.subtotal = out_totals["subtotal"]
+        invoice.total = out_totals["total"]
+        invoice.items_issues = issues
+        invoice.items_autofixed = len(changes)
+        db.commit()
+
+    return {
+        "items": _item_payload(fixed, "rules"),
+        "totals": out_totals,
+        "changes": changes,
+        "issues": issues,
+        "confidence": 100 if not issues else max(0, 100 - 8 * len(issues)),
+    }
+
+
 @router.post("", status_code=201)
 def create_invoice(payload: InvoiceIn, request: Request,
                    user: User = Depends(require_active_subscription), db: Session = Depends(get_db)):
@@ -267,6 +512,10 @@ def create_invoice(payload: InvoiceIn, request: Request,
     db.commit()
     db.refresh(invoice)
     _apply_items(db, invoice, payload.items)
+    if payload.items_engine:
+        invoice.items_engine = payload.items_engine
+        invoice.items_confidence = int(payload.items_confidence or 0)
+        invoice.items_autofixed = int(payload.items_autofixed or 0)
     _recalc(invoice, db)
     db.commit()
     db.refresh(invoice)
@@ -296,6 +545,10 @@ def update_invoice(invoice_id: int, payload: InvoiceIn, request: Request,
         setattr(invoice, field, getattr(payload, field))
     if payload.ocr_text:
         invoice.ocr_text = payload.ocr_text[:400000]
+    if payload.items_engine:
+        invoice.items_engine = payload.items_engine
+        invoice.items_confidence = int(payload.items_confidence or 0)
+        invoice.items_autofixed = int(payload.items_autofixed or 0)
     invoice.updated_at = utcnow()
     _apply_items(db, invoice, payload.items)
     _recalc(invoice, db)

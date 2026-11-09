@@ -69,10 +69,70 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """ساخت جداول در صورت نبود (نصب بدون مهاجرت دستی)."""
+    """ساخت جداول در صورت نبود + افزودن ستون‌های تازه به نصب‌های قدیمی."""
     from . import models  # noqa: F401  ثبت مدل‌ها
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
+
+
+# ستون‌هایی که ممکن است در پایگاه‌دادهٔ نصب‌های قدیمی نباشند.
+# create_all جدول موجود را تغییر نمی‌دهد، پس خودمان ALTER TABLE می‌زنیم.
+_ADDED_COLUMNS = {
+    "invoice_items": (
+        ("engine", "VARCHAR(24) DEFAULT 'manual'"),
+        ("ai_confidence", "INTEGER DEFAULT 0"),
+        ("verified", "INTEGER DEFAULT 0"),
+        ("note", "VARCHAR(200) DEFAULT ''"),
+    ),
+    "invoices": (
+        ("items_engine", "VARCHAR(24) DEFAULT ''"),
+        ("items_confidence", "INTEGER DEFAULT 0"),
+        ("items_autofixed", "INTEGER DEFAULT 0"),
+        ("items_issues", "TEXT"),
+    ),
+}
+
+
+def _ensure_columns() -> None:
+    """ستون‌های تازه را با ALTER TABLE اضافه می‌کند (SQLite و MySQL)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        existing_tables = set(insp.get_table_names())
+    except Exception:                                    # pragma: no cover
+        return
+
+    is_sqlite = engine.url.get_backend_name() == "sqlite"
+    for table, columns in _ADDED_COLUMNS.items():
+        if table not in existing_tables:
+            continue
+        try:
+            have = {col["name"] for col in insp.get_columns(table)}
+        except Exception:                                # pragma: no cover
+            continue
+        for name, ddl in columns:
+            if name in have:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+            except Exception as exc:                     # pragma: no cover
+                # MySQL قدیمی DEFAULT برای TEXT نمی‌پذیرد
+                if is_sqlite:
+                    raise
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f"ALTER TABLE {table} ADD COLUMN {name} "
+                            f"{ddl.split(' DEFAULT ')[0]}"
+                        ))
+                except Exception:
+                    import logging
+                    logging.getLogger("faktorkhan.db").warning(
+                        "ستون %s.%s اضافه نشد: %s", table, name, exc
+                    )
 
 
 def db_health() -> dict:

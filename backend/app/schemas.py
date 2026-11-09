@@ -56,6 +56,10 @@ class InvoiceItemIn(BaseModel):
     discount: int = 0
     tax_rate: int = 0
     total: int = 0
+    engine: Literal["manual", "rules", "ai"] = "manual"
+    ai_confidence: int = Field(default=0, ge=0, le=100)
+    verified: bool = False
+    note: str = ""
 
 
 class InvoiceIn(BaseModel):
@@ -80,6 +84,9 @@ class InvoiceIn(BaseModel):
     source: Literal["manual", "cloud", "local"] = "manual"
     job_id: int | None = None
     items: list[InvoiceItemIn] = []
+    items_engine: str = ""
+    items_confidence: int = 0
+    items_autofixed: int = 0
 
     @field_validator("issue_date", "due_date")
     @classmethod
@@ -166,6 +173,26 @@ class SettingsIn(BaseModel):
     announcement: str | None = None
 
 
+class InvoiceItemOut(BaseModel):
+    id: int
+    row_no: int
+    code: str
+    description: str
+    qty: float
+    unit: str
+    unit_price: int
+    discount: int
+    tax_rate: int
+    total: int
+    engine: str = "manual"
+    ai_confidence: int = 0
+    verified: int = 0
+    note: str = ""
+
+    class Config:
+        from_attributes = True
+
+
 class InvoiceOut(BaseModel):
     id: int
     number: str
@@ -179,6 +206,10 @@ class InvoiceOut(BaseModel):
     source: str
     confidence: int
     created_at: datetime
+    items_engine: str = ""
+    items_confidence: int = 0
+    items_autofixed: int = 0
+    items: list[InvoiceItemOut] = []
 
     class Config:
         from_attributes = True
