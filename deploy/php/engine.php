@@ -501,9 +501,24 @@ if (!function_exists('fk_understand')) {
             }
             $nums = array_reverse($nums);
             $cnt = count($nums);
+            /*
+             * اگر جدول ناقص است، «مبلغ» را از روی «تعداد» حدس نزن.
+             * در «کالا  2» عدد ۲ تعداد است، نه مبلغ؛ بهتر است مبلغ خالی بماند
+             * تا از قیمت × تعداد ساخته شود، تا اینکه عدد غلط ثبت شود.
+             */
             if ($cnt >= 3) { $qty = $nums[0]; $price = $nums[1]; $total = $nums[2]; }
-            elseif ($cnt === 2) { $qty = 1; $price = $nums[0]; $total = $nums[1]; }
-            elseif ($cnt === 1) { $qty = 1; $price = 0; $total = $nums[0]; }
+            elseif ($cnt === 2) {
+                // دو عدد: اگر اولی کوچک است احتمالاً تعداد است
+                if ($nums[0] <= 1000 && $nums[1] > $nums[0] * 10) {
+                    $qty = $nums[0]; $price = $nums[1]; $total = 0;
+                } else {
+                    $qty = 1; $price = $nums[0]; $total = $nums[1];
+                }
+            }
+            elseif ($cnt === 1) {
+                // یک عدد تنها در سطر = مبلغ نهایی، نه قیمت واحد
+                $qty = 1; $price = 0; $total = $nums[0];
+            }
             else return null;
         }
 
