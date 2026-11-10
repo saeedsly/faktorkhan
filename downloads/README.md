@@ -53,7 +53,7 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 
 ---
 
-## ۳) کد منبع کامل (۷۰۷ کیلوبایت)
+## ۳) کد منبع کامل (۷۰۹ کیلوبایت)
 
 **دانلود:**
 https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
@@ -90,4 +90,4 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 |---|---|---|
 | `faktorkhan-php-htdocs.zip` | ۷۲ KB | WAMP / XAMPP — ۱۲ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۷۰۷ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۷۰۹ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
