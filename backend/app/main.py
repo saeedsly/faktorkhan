@@ -35,6 +35,15 @@ async def lifespan(app: FastAPI):
     info = bootstrap()
     if info.get("owner"):
         log.warning("حساب مالک ساخته شد — فایل storage/OWNER-CREDENTIALS.txt را بررسی کنید.")
+    # کارهایی که در ری‌استارت قبلی نیمه‌کاره ماندند را ببند تا هیچ کاربری
+    # برای همیشه «در حال پردازش» نبیند (شکایت اصلی: گیر کردن روی یک درصد).
+    try:
+        from .services.jobs import recover_stale
+        _n = recover_stale()
+        if _n:
+            log.warning("%d کار نیمه‌کاره بسته شد.", _n)
+    except Exception as _exc:                       # noqa: BLE001
+        log.warning("بازیابی کارهای نیمه‌کاره ناموفق بود: %s", type(_exc).__name__)
     log.info("%s v%s آماده است", settings.APP_NAME, settings.APP_VERSION)
     if settings.is_prod:
         if not os.getenv("SECRET_KEY"):

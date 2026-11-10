@@ -1206,6 +1206,12 @@ function job_create(array $data): array
  */
 function job_gc(): void
 {
+    /* کارهای نیمه‌کاره‌ای که بیش از ۲۰ دقیقه در وضعیت میانی مانده‌اند
+       را ببند. بدون این کار، اگر هاست وسط پردازش قطع شود یا کاربر صفحه
+       را ببندد، صفحه برای همیشه روی یک درصد گیر می‌کند و کاربر فکر
+       می‌کند برنامه خراب است. اعتبار مصرف‌شده هم بی‌گناه تلف می‌شود. */
+    job_reap_stale();
+
     $cut = time() - 172800;
     foreach (@glob(jobs_dir() . '/*.json') ?: array() as $f) {
         if (@filemtime($f) < $cut) {
@@ -1220,6 +1226,65 @@ function job_gc(): void
     foreach (@glob(FK_UPLOADS . '/*.tmp') ?: array() as $f) {
         @unlink($f);
     }
+}
+
+/**
+ * بستن کارهای نیمه‌کارهٔ قدیمی.
+ *
+ * چرا لازم است: هر کار در فایل JSON خودش نگه داشته می‌شود و فقط وقتی
+ * پیش می‌رود که چیزی job_tick را صدا بزند (مرورگر یا cron). اگر مرورگر
+ * بسته شود و cron نصب نباشد، کار تا ابد در وضعیت «converting» می‌ماند.
+ * کاربر بعداً صفحه را باز می‌کند، درصد ثابتی می‌بیند و هیچ پیامی نمی‌گیرد.
+ *
+ * این تابع چنین کاری را «شکست‌خورده با پیام روشن» می‌کند تا کاربر
+ * بداند چه شد و بتواند دوباره بفرستد — به‌جای انتظار بی‌پایان.
+ *
+ * @param int $minutes حداکثر عمر مجاز برای یک کار در حال اجرا
+ * @return int تعداد کارهایی که بسته شد
+ */
+function job_reap_stale(int $minutes = 20): int
+{
+    $reaped = 0;
+    $budget = time() - $minutes * 60;
+    foreach (@glob(jobs_dir() . '/*.json') ?: array() as $f) {
+        $raw = @file_get_contents($f);
+        if ($raw === false || $raw === '') {
+            continue;
+        }
+        $job = json_decode($raw, true);
+        if (!is_array($job)) {
+            continue;
+        }
+        if (job_is_terminal($job)) {
+            continue;
+        }
+        /* زمان آخرین فعالیت: هر مرحله job_save می‌کند، پس mtime دقیق است */
+        $seen = (int) (@filemtime($f) ?: 0);
+        if ($seen > $budget) {
+            continue;                       /* تازه در حال کار است */
+        }
+        $stage = (string) ($job['stage'] ?? '');
+        /* اگر در مرحلهٔ دریافت خروجی بود، ممکن است متن از سرویس آمده باشد */
+        if (isset($job['saved']) && $job['saved'] !== '' && is_file((string) $job['saved'])) {
+            $text = fk_body_text((string) @file_get_contents((string) $job['saved']),
+                (string) ($job['suffix'] ?? ''));
+            if (trim($text) !== '') {
+                $job = job_finish_text($job, $text);
+                job_save($job);
+                $reaped++;
+                continue;
+            }
+        }
+        $job['status'] = 'failed';
+        $job['stage'] = 'failed';
+        $job['error'] = 'StaleJob';
+        $job['message'] = 'پردازش این فایل نیمه‌کاره ماند (اتصال یا مرورگر قطع شد). '
+            . 'اعتباری برای آن مصرف نشده است؛ لطفاً فایل را دوباره بفرستید.';
+        $job['finished_at'] = time();
+        job_save($job);
+        $reaped++;
+    }
+    return $reaped;
 }
 
 /**

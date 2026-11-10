@@ -189,18 +189,77 @@ def audit(
         db.rollback()
 
 
-# ------------------------------------------------------------ محدودیت نرخ ساده
+# ------------------------------------------------------------ محدودیت نرخ
+"""
+محدودیت نرخ — با آگاهی از «چند کاربر پشت یک IP»
+
+باگ واقعی که این را لازم کرد: در یک شبکهٔ اداری، ۱۰۰ کاربر از طریق
+یک NAT به اینترنت وصل‌اند و همه **یک IP** دارند. اگر محدودیت را فقط به
+IP گره بزنیم، کاربر یازدهم به بعد مسدود می‌شود و همه فکر می‌کنند برنامه
+خراب است.
+
+راه‌حل: کلید محدودیت ترکیبی است:
+  • اگر کاربر وارد شده باشد → شناسهٔ خودش (هر کاربر سهم خودش را دارد)
+  • اگر وارد نشده باشد       → IP + شناسهٔ دستگاه (مرورگر)
+
+این کار هم ضدحملهٔ خودکار مؤثر می‌ماند، هم کاربران واقعی را در یک دفتر
+مسدود نمی‌کند.
+"""
 _RATE: dict[str, deque] = defaultdict(deque)
+_RATE_SEEN: dict[str, float] = {}
+_RATE_LAST_CLEAN = [0.0]
 
 
-def rate_limit(request: Request, bucket: str, limit: int = 30, window: int = 60) -> None:
-    key = f"{bucket}:{client_ip(request)}"
+def _rate_key(request: Request, bucket: str) -> str:
+    """کلید محدودیت: کاربر واقعی اولویت دارد، بعد IP + دستگاه."""
+    identity = ""
+    try:
+        # اگر توکن معتبر در هدر است، از شناسهٔ کاربر استفاده کن
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            from .security import decode_token
+
+            payload = decode_token(auth.split(" ", 1)[1].strip())
+            identity = f"u{payload.get('sub') or payload.get('uid') or ''}"
+    except Exception:
+        identity = ""
+    if not identity:
+        # اثر انگشت سبک مرورگر — دو کاربر پشت یک IP کلید جدا می‌گیرند
+        ua = (request.headers.get("user-agent") or "")[:120]
+        lang = (request.headers.get("accept-language") or "")[:40]
+        identity = f"d{client_ip(request)}|{hash(ua + lang) & 0xFFFFFF:06x}"
+    return f"{bucket}:{identity}"
+
+
+def _rate_cleanup(now: float) -> None:
+    """پاک‌سازی دوره‌ای — بدون این، حافظه با هر IP جدید رشد می‌کند."""
+    if now - _RATE_LAST_CLEAN[0] < 300:
+        return
+    _RATE_LAST_CLEAN[0] = now
+    stale = [k for k in _RATE if not _RATE[k] or now - _RATE[k][-1] > 3600]
+    for k in stale:
+        _RATE.pop(k, None)
+
+
+def rate_limit(request: Request, bucket: str, limit: int = 30, window: int = 60,
+               per_user: bool = True) -> None:
+    """محدودیت نرخ.
+
+    per_user=True (پیش‌فرض): هر کاربر سهم خودش را دارد — مناسب نصب چندکاربره.
+    per_user=False: محدودیت خالص بر IP — برای مسیرهای ضدحمله مثل ورود،
+    که مهاجم ممکن است هزار حساب بسازد.
+    """
+    if not getattr(settings, "RATE_LIMIT_ENABLED", True):
+        return
+    key = _rate_key(request, bucket) if per_user else f"{bucket}:{client_ip(request)}"
     now = time.time()
+    _rate_cleanup(now)
     q = _RATE[key]
     while q and now - q[0] > window:
         q.popleft()
     if len(q) >= limit:
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "تعداد درخواست‌ها زیاد است؛ کمی صبر کنید.")
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "تعداد درخواست‌ها زیاد است؛ چند لحظه صبر کنید و دوباره تلاش کنید.")
     q.append(now)
 
 

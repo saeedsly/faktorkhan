@@ -125,9 +125,15 @@ class Settings:
     FORWARDED_ALLOW_IPS: str = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1").strip()
     FORCE_HTTPS: bool = _bool("FORCE_HTTPS", False)
     HSTS_SECONDS: int = _int("HSTS_SECONDS", 31536000)
-    # محدودیت نرخ برای ورود/ثبت‌نام (به تفکیک IP)
+    # محدودیت نرخ
+    # توجه: محدودیت ورود/ثبت‌نام عمداً به IP گره می‌خورد (ضدحمله)، ولی
+    # محدودیت کارهای عادی به «کاربر» — وگرنه ۱۰۰ کاربر پشت یک NAT اداری
+    # یکدیگر را مسدود می‌کنند. جزئیات در deps.py.
     LOGIN_RATE_LIMIT: int = _int("LOGIN_RATE_LIMIT", 20)
     LOGIN_RATE_WINDOW: int = _int("LOGIN_RATE_WINDOW", 300)
+    RATE_LIMIT_ENABLED: bool = _bool("RATE_LIMIT_ENABLED", True)
+    # سهم هر کاربر در دقیقه برای کارهای پرمصرف (OCR، آپلود، فهم متن)
+    USER_RATE_LIMIT: int = _int("USER_RATE_LIMIT", 40)
 
     # --- CORS --------------------------------------------------------
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")

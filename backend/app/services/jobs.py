@@ -60,6 +60,51 @@ def run(job_id: int) -> None:
         _update(job_id, status="failed", message="خطای غیرمنتظره در پردازش فایل رخ داد.", progress=0)
 
 
+# ---------------------------------------------------- بازیابی کارهای گیرکرده
+def recover_stale(max_age_minutes: int = 20) -> int:
+    """کارهایی که سرور وسط پردازششان خاموش/ری‌استارت شده را نجات بده.
+
+    بدون این تابع، هر ری‌استارت سرور (یا هر بار که کاربر صفحه را رفرش
+    می‌کند و کار در «در حال پردازش» مانده) یک کار یتیم برای همیشه باقی
+    می‌گذارد: کاربر درصد ثابتی می‌بیند که هیچ‌وقت تمام نمی‌شود — دقیقاً
+    همان چیزی که نباید اتفاق بیفتد.
+
+    کارهایی که خیلی وقت است در وضعیت میانی مانده‌اند و رشته‌ای در این
+    پروسه ندارند، به «شکست» با پیام روشن تبدیل می‌شوند تا کاربر بتواند
+    دوباره تلاش کند.
+    """
+    import datetime as _dt
+    from sqlalchemy import select
+
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=max_age_minutes)
+    pending = {"queued", "uploading", "processing", "converting", "polling"}
+    recovered = 0
+    try:
+        with session_scope() as db:
+            rows = db.execute(select(OcrJob).where(OcrJob.status.in_(pending))).scalars().all()
+            for row in rows:
+                created = row.created_at
+                if created is None:
+                    continue
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=_dt.timezone.utc)
+                if created > cutoff:
+                    continue                        # تازه شروع شده — دست نزن
+                row.status = "failed"
+                row.progress = 0
+                row.message = (
+                    "پردازش این فایل نیمه‌کاره ماند (سرور در میانهٔ کار بازراه‌اندازی شد). "
+                    "اعتباری برای آن مصرف نشده است؛ فایل را دوباره بفرستید."
+                )
+                recovered += 1
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("recover_stale failed: %s", type(exc).__name__)
+        return 0
+    if recovered:
+        log.warning("%d کار نیمه‌کاره بازیابی شد.", recovered)
+    return recovered
+
+
 # ------------------------------------------------------------ محلی
 def _run_local(job: OcrJob) -> None:
     from . import local_ocr
@@ -121,103 +166,210 @@ def _run_cloud(job: OcrJob) -> None:
             pass
 
 
-def _text_from_file(path: Path) -> str:
-    """متن را از فایل خروجی سرویس بیرون می‌کشد.
+def _decode_text(raw: bytes) -> str:
+    """رمزگشایی متن با چند کدگذاری — سرویس ممکن است هرکدام را بدهد."""
+    for enc in ("utf-8-sig", "utf-8", "windows-1256", "cp1252", "utf-16"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    return raw.decode("utf-8", errors="ignore")
 
-    سرویس ممکن است txt/json/docx/html/zip بدهد. نسخهٔ قبلی فقط پسوندهای
-    متنی را می‌خواند و اگر docx می‌آمد، متن خالی می‌ماند و کار «شکست»
-    اعلام می‌شد — در حالی که توکن مصرف شده بود.
-    """
-    import json
+
+def _docx_text(bundle) -> str:
+    """متن را از بستهٔ docx بیرون می‌کشد (بدون وابستگی بیرونی)."""
+    import re as _re
     import zipfile
 
-    suffix = path.suffix.lower()
-    try:
-        if suffix in {".txt", ".csv", ".xml", ".html", ".htm"}:
-            raw = path.read_bytes()
-            for enc in ("utf-8-sig", "utf-8", "windows-1256", "cp1252"):
-                try:
-                    return raw.decode(enc)
-                except UnicodeDecodeError:
-                    continue
-            return raw.decode("utf-8", errors="ignore")
-
-        if suffix == ".json":
-            raw = path.read_text(encoding="utf-8", errors="ignore")
-            try:
-                data = json.loads(raw)
-            except ValueError:
-                return raw
-            # ساختارهای رایج: {"Output": "..."} یا فهرست صفحه‌ها با Text/Lines
-            if isinstance(data, dict):
-                for key in ("Output", "Text", "text", "content", "Content"):
-                    if isinstance(data.get(key), str) and data[key].strip():
-                        return data[key]
-            pieces: list[str] = []
-
-            def walk(node) -> None:
-                if isinstance(node, str):
-                    return
-                if isinstance(node, dict):
-                    for key in ("Text", "text", "Line", "Words", "Result", "Value"):
-                        value = node.get(key)
-                        if isinstance(value, str) and value.strip():
-                            pieces.append(value.strip())
-                            return
-                    for value in node.values():
-                        walk(value)
-                elif isinstance(node, list):
-                    for value in node:
-                        walk(value)
-
-            walk(data)
-            if pieces:
-                return "\n".join(pieces)
-            return raw
-
-        if suffix == ".docx":
-            # docx خودش zip است؛ متن در word/document.xml و با تگ <w:t>
-            with zipfile.ZipFile(path) as bundle:
-                try:
-                    xml = bundle.read("word/document.xml").decode("utf-8", errors="ignore")
-                except KeyError:
-                    return ""
-            import re as _re
-            # هر پاراگراف یک خط؛ بدون این کار همهٔ سطرها به هم می‌چسبند
-            # («فاکتور خریدمبلغ ۲۵۰۰۰۰») و ستون‌های جدول از هم جدا نمی‌شوند.
-            paragraphs = _re.split(r"</w:p>", xml)
-            lines: list[str] = []
-            for para in paragraphs:
-                cells = _re.findall(r"<w:t[^>]*>(.*?)</w:t>", para, flags=_re.S)
-                line = "".join(cells)
-                line = (_re.sub(r"<[^>]+>", "", line)
-                        .replace("&amp;", "&").replace("&lt;", "<")
-                        .replace("&gt;", ">").replace("&quot;", '"')
-                        .replace("&apos;", "'"))
-                if line.strip():
-                    lines.append(line.rstrip())
+    for entry in ("word/document.xml", "content.xml", "word/document2.xml"):
+        try:
+            xml = bundle.read(entry).decode("utf-8", errors="ignore")
+        except KeyError:
+            continue
+        paragraphs = _re.split(r"</w:p>", xml)
+        lines: list[str] = []
+        for para in paragraphs:
+            cells = _re.findall(r"<w:t[^>]*>(.*?)</w:t>", para, flags=_re.S)
+            if not cells:
+                # OpenDocument از <text:p> استفاده می‌کند
+                cells = _re.findall(r"<text:p[^>]*>(.*?)</text:p>", para, flags=_re.S)
+            line = "".join(cells)
+            line = (_re.sub(r"<[^>]+>", "", line)
+                    .replace("&amp;", "&").replace("&lt;", "<")
+                    .replace("&gt;", ">").replace("&quot;", '"')
+                    .replace("&apos;", "'"))
+            if line.strip():
+                lines.append(line.rstrip())
+        if lines:
             return "\n".join(lines)
-
-        if suffix == ".zip":
-            with zipfile.ZipFile(path) as bundle:
-                for name in bundle.namelist():
-                    if name.lower().endswith((".txt", ".json", ".xml", ".htm", ".html")):
-                        return _text_from_file_name(bundle, name)
-            return ""
-    except (OSError, zipfile.BadZipFile, ValueError) as exc:
-        log.warning("خواندن خروجی %s ناموفق: %s", suffix, type(exc).__name__)
-        return ""
     return ""
 
 
-def _text_from_file_name(bundle, name: str) -> str:
-    raw = bundle.read(name)
-    for enc in ("utf-8-sig", "utf-8", "windows-1256"):
+def _json_text(raw: str) -> str:
+    """متن را از پاسخ JSON بیرون می‌کشد — ساختارهای رایج سرویس‌ها را می‌شناسد."""
+    import json
+
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return ""
+    if isinstance(data, dict):
+        for key in ("Output", "Text", "text", "Content", "content", "Result"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    pieces: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key in ("Text", "text", "Line", "Word", "Words", "Result", "Value"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    pieces.append(value.strip())
+                    return
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(data)
+    return "\n".join(pieces)
+
+
+def _text_from_file(path: Path) -> str:
+    """متن را از فایل خروجی سرویس بیرون می‌کشد.
+
+    درس مهم از باگ واقعی (کاربر: «اعتبار کم می‌شود ولی متن نمی‌آید»):
+    همان کاری را بکن که نسخهٔ PHP می‌کند و کار می‌کند — به **محتوای**
+    فایل نگاه کن، نه فقط پسوند. سرویس لینک را گاهی بدون پسوند می‌دهد،
+    گاهی با پسوند بزرگ، گاهی docx را با نام .bin. تشخیص بر پایهٔ پسوند
+    در همهٔ این حالت‌ها متن را دور می‌ریخت در حالی که فایل سالم بود.
+    """
+    import zipfile
+
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    if not raw:
+        return ""
+
+    # ── ۱) شناسایی واقعی ZIP (docx/odt/zip خروجی) از روی بایت‌های اول
+    if raw[:2] == b"PK":
         try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="ignore")
+            with zipfile.ZipFile(path) as bundle:
+                text = _docx_text(bundle)
+                if text.strip():
+                    return text
+                # زیپ ولی سند ورد نبود — دنبال هر فایل متنی داخلش بگرد
+                for name in bundle.namelist():
+                    if name.lower().endswith((".txt", ".json", ".xml", ".csv", ".html")):
+                        inner = bundle.read(name)
+                        if inner[:1] in (b"{", b"["):
+                            parsed = _json_text(_decode_text(inner))
+                            if parsed.strip():
+                                return parsed
+                        return _decode_text(inner)
+                return ""                           # زیپ باز شد ولی متنی نبود
+        except (zipfile.BadZipFile, OSError):
+            # فایل با PK شروع شده ولی ZIP سالم نیست. اگر پسوندش سند است،
+            # یعنی فایل خراب است — «notazip» را به‌عنوان متن فاکتور برنگردان.
+            if path.suffix.lower() in {".docx", ".doc", ".odt", ".xlsx", ".pptx", ".zip"}:
+                return ""
+            # وگرنه ممکن است متن ساده‌ای باشد که اتفاقی با P شروع شده
+
+    # ── ۲) شناسایی متن از روی محتوا (نه پسوند)
+    head = raw[:600].lstrip().lower()
+    looks_html = head.startswith((b"<!doctype", b"<html", b"<?xml", b"<w:"))
+    looks_json = head[:1] in (b"{", b"[")
+    # بایت‌های کنترلی = فایل دودویی
+    _control = set(range(0, 9)) | {11, 12} | set(range(14, 32))
+    is_binary = any(b in _control for b in raw[:4000])
+
+    # پسوند سند ولی محتوا ZIP نیست → فایل خراب است، متن فاکتور برنگردان
+    if path.suffix.lower() in {".docx", ".doc", ".odt", ".xlsx", ".pptx"} and not looks_json:
+        if not (looks_html and b"<w:" in head):
+            return ""
+
+    if looks_json:
+        parsed = _json_text(_decode_text(raw))
+        if parsed.strip():
+            return parsed
+        return _decode_text(raw)                    # JSON نامعتبر → خام
+
+    if looks_html or not is_binary:
+        text = _decode_text(raw)
+        if looks_html or "<" in text[:200]:
+            # تگ‌های HTML/XML را بردار تا متن خالص بماند
+            import re as _re
+            text = _re.sub(r"<script[\s\S]*?</script>", " ", text, flags=_re.I)
+            text = _re.sub(r"<style[\s\S]*?</style>", " ", text, flags=_re.I)
+            text = _re.sub(r"<[^>]+>", "\n", text)
+            for entity, char in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
+                                 ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'")):
+                text = text.replace(entity, char)
+            text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+        return text
+
+    # ── ۳) دودویی ناشناخته — پسوند می‌تواند کمک کند
+    suffix = path.suffix.lower()
+    if suffix in {".txt", ".csv", ".xml", ".html", ".htm", ".json", ".rtf"}:
+        return _decode_text(raw)
+    return ""
+
+
+def _rescue_with_ai(job: OcrJob, meta: dict) -> str:
+    """اگر سرویس ابری متنی نداد، خود تصویر را با هوش مصنوعی بخوان.
+
+    مزیت بزرگ: اعتبار سرویس ابری مصرف نمی‌شود و فایل روی سرور خودمان
+    است. اگر کلید تنظیم شده باشد، کاربر هرگز «دست‌خالی» نمی‌ماند.
+    """
+    from .ai_parser import extract_items_ai
+
+    path = Path(job.file_path or "")
+    if not job.file_path or not path.is_file():
+        meta["ai_rescue"] = "no_file"
+        return ""
+    suffix = path.suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".pdf", ".bmp", ".tif", ".tiff"}:
+        meta["ai_rescue"] = "unsupported_type"
+        return ""
+    _update(job.id, message="سرویس ابری متنی نداد؛ خوانش با موتور هوش مصنوعی…", progress=70)
+    result = extract_items_ai(
+        str(path), api_key=settings.AI_ITEMS_KEY,
+        model=settings.AI_ITEMS_MODEL, timeout=settings.AI_ITEMS_TIMEOUT,
+    )
+    if not result.get("ok"):
+        meta["ai_rescue"] = result.get("error") or "failed"
+        meta["ai_rescue_message"] = result.get("message") or ""
+        return ""
+
+    # فاکتور را از ساختار AI به متن خوانا تبدیل کن تا در همان باکس بیاید
+    lines: list[str] = []
+    for item in result.get("items") or []:
+        name = str(item.get("description") or item.get("name") or "").strip()
+        qty = item.get("quantity") or 0
+        price = item.get("unit_price") or 0
+        total = item.get("total") or item.get("line_total") or 0
+        if name:
+            parts = [name]
+            if qty:
+                parts.append(f"تعداد {qty}")
+            if price:
+                parts.append(f"قیمت {price:,}")
+            if total:
+                parts.append(f"مبلغ {total:,}")
+            lines.append(" — ".join(parts))
+    totals = result.get("totals") or {}
+    if totals.get("total"):
+        lines.append(f"جمع کل: {int(totals['total']):,}")
+    elif totals.get("subtotal"):
+        lines.append(f"جمع کل: {int(totals['subtotal']):,}")
+
+    meta["ai_rescue"] = "ok"
+    meta["ai_result"] = result
+    return "\n".join(lines)
 
 
 def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
@@ -337,6 +489,14 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
     meta["remote"] = True
     meta["chars"] = len(text)
 
+    # ── ۵) نجات خودکار: اگر سرویس متنی نداد، خودِ تصویر را از موتور
+    #      هوش مصنوعی بخوان. این همان کاری است که نسخهٔ PHP می‌کند و
+    #      کاربر را از «اعتبار کم شد ولی متنی نیامد» نجات می‌دهد.
+    if not text.strip() and settings.AI_ITEMS_ENABLED and settings.AI_ITEMS_KEY:
+        rescued = _rescue_with_ai(job, meta)
+        if rescued:
+            text = rescued
+
     if not text.strip():
         # پیام دقیق: بگو دقیقاً کجا شکست خورد و کاربر چه کار کند،
         # نه یک جملهٔ مبهم که فقط نگرانی تولید می‌کند.
@@ -355,7 +515,12 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
             detail.append(f"وضعیت سرویس: {meta['check_status']}")
         message = "سرویس ابری خروجی متنی برنگرداند — " + " · ".join(detail) + "."
         kept = bool(saved is not None and saved.is_file() and saved.stat().st_size > 0)
-        if kept:
+        # فقط وقتی بگو «دانلودش کن» که فایل واقعاً سند قابل‌استفاده باشد.
+        # گفتن این جمله برای فایل دودوییِ بی‌محتوا کاربر را دنبال سراب می‌فرستد.
+        _doc_suffixes = {".docx", ".doc", ".pdf", ".odt", ".txt", ".rtf", ".xlsx"}
+        kept_useful = kept and (Path(str(saved)).suffix.lower() in _doc_suffixes
+                                or meta.get("text_source") in {"download", "convert"})
+        if kept_useful:
             message += " فایل خروجی ذخیره شد؛ از پنل دانلودش کنید."
         elif meta.get("convert_status", "").lower().startswith(("invalid", "badrequest")):
             # درخواست از پایه رد شده — کیفیت عکس ربطی ندارد، گفتنش گمراه‌کننده است
