@@ -120,6 +120,11 @@ class FakeService(BaseHTTPRequestHandler):
             # حالت عادی: کلید با فاصله در دو طرف
             self._send({"Status": "Done", " FileToDownload ": f"http://127.0.0.1:{PORT}/out.docx"})
         elif command == "checkconvert":
+            if MODE.get("check_invalid"):
+                # باگ واقعی: سرویس به checkconvert (که فقط command و
+                # filetoken دارد) با InvalidParams جواب می‌دهد. کار نباید بمیرد.
+                self._send({"Status": "InvalidParams"})
+                return
             # علت ۳: «هنوز آماده نیست» — نباید کار را بکشد
             self._send({"Status": "Data Not Found Yet"})
         elif command == "checkcredit":
@@ -321,7 +326,62 @@ check("پیام دروغ «فایل ذخیره شد» نیست", "ذخیره ش�
 check("result_path خالی است", not (done3.result_path or ""), done3.result_path or "")
 check("راهنمای بی‌ربط «کیفیت عکس» نرفته", "کیفیت عکس" not in msg, msg)
 
-print("\n[۷] Path(\"\") هرگز به‌عنوان فایل ذخیره‌شده تلقی نشود")
+print("\n[۷] checkconvert با InvalidParams جواب می‌دهد (باگ واقعی گزارش‌شده)")
+print("    پیام کاربر: «پارامترهای ارسالی: command, filetoken»")
+MODE["invalid"] = False          # convert مثل همیشه کار کند
+MODE["check_invalid"] = True
+with session_scope() as db:
+    user4 = User(email="t4@t.t", full_name="آزمون۴", password_hash="x", is_active=True)
+    db.add(user4)
+    db.flush()
+    job4 = OcrJob(user_id=user4.id, provider="cloud", method=4, output="txtrawjson",
+                  file_name="invoice4.png", file_path="/tmp/w.png",
+                  status="queued", progress=0, meta={})
+    db.add(job4)
+    db.flush()
+    job4_id = job4.id
+
+fetched4 = jobs._get(job4_id)
+meta4 = dict(fetched4.meta or {})
+meta4["methods"] = [4]
+jobs._run_document(fetched4, "TOKEN-CHECKINV", meta4)
+done4 = jobs._get(job4_id)
+print(f"    وضعیت: {done4.status} | پیام: {(done4.message or '')[:80]}")
+check("کار نمرد (checkconvert مهم نیست وقتی لینک آمده)", done4.status == "done", done4.status)
+check("متن استخراج شد", "فاکتور فروش" in (done4.text or ""), repr((done4.text or "")[:40]))
+check("checkconvert اصلاً صدا زده نشد", CALLS.get("checkconvert", 0) == 0,
+      f"تعداد: {CALLS.get('checkconvert', 0)}")
+MODE["check_invalid"] = False
+
+print("\n[۸] لینک نیامد و checkconvert هم InvalidParams → پیام گویا، نه سکوت")
+MODE["invalid"] = "always"        # convert رد می‌شود → لینک نمی‌آید
+MODE["check_invalid"] = True      # checkconvert هم رد می‌شود
+with session_scope() as db:
+    user5 = User(email="t5@t.t", full_name="آزمون۵", password_hash="x", is_active=True)
+    db.add(user5)
+    db.flush()
+    job5 = OcrJob(user_id=user5.id, provider="cloud", method=4, output="txtrawjson",
+                  file_name="invoice5.png", file_path="/tmp/v.png",
+                  status="queued", progress=0, meta={})
+    db.add(job5)
+    db.flush()
+    job5_id = job5.id
+
+fetched5 = jobs._get(job5_id)
+meta5 = dict(fetched5.meta or {})
+meta5["methods"] = [4]
+jobs._run_document(fetched5, "TOKEN-BOTH", meta5)
+done5 = jobs._get(job5_id)
+msg5 = done5.message or ""
+print(f"    وضعیت: {done5.status}")
+print(f"    پیام : {msg5[:140]}")
+check("کار بسته شد (گیر نکرد)", done5.status == "failed", done5.status)
+check("پیام گویاست", bool(msg5.strip()) and len(msg5) > 20, msg5[:60])
+check("پیام دروغ «ذخیره شد» نیست", "ذخیره شد" not in msg5, msg5[:60])
+MODE["invalid"] = False
+MODE["check_invalid"] = False
+
+print("\n[۹] Path(\"\") هرگز به‌عنوان فایل ذخیره‌شده تلقی نشود")
 from pathlib import Path as _Path
 fake = _Path("")
 check("Path('') وجود دارد (تله)", fake.exists())

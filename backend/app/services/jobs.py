@@ -268,36 +268,61 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
         text = result["output"]
         meta["text_source"] = "convert"
 
-    # ── ۳) دنبال کردن وضعیت — فقط اگر واقعاً در حال تبدیل است
-    if not text.strip():
-        checked = cloud_ocr.check_convert(file_token)
-        meta["check_status"] = checked.get("status", "")
-        if checked.get("output"):
-            text = checked["output"]
-            meta["text_source"] = "checkconvert"
-        lowered = checked.get("status", "").lower().replace(" ", "")
-        pending = {"converting", "inprogress", "processing", "queued", "waiting", "notready"}
-        if not text.strip() and (lowered in pending or checked.get("progress", 0) < 100):
-            for _ in range(30):
-                time.sleep(POLL_INTERVAL)
-                try:
-                    checked = cloud_ocr.check_convert(file_token)
-                except cloud_ocr.CloudError as exc:
-                    log.warning("checkconvert کار %s: %s", job.id, exc.code)
-                    continue
-                _update(job.id, progress=min(55 + checked.get("progress", 0) // 2, 92),
-                        message=f"پیشرفت تبدیل: {checked.get('progress', 0)}%")
-                if checked.get("output"):
-                    text = checked["output"]
-                    meta["text_source"] = "checkconvert"
-                    break
-                lowered = checked.get("status", "").lower().replace(" ", "")
-                if checked.get("progress", 0) >= 100 or lowered in {"done", "finished", "completed"}:
-                    break
-                if lowered in {"error", "failed", "notfound"}:
-                    break
+    # ── ۳) دنبال کردن وضعیت
+    #
+    # دو قاعدهٔ مهم که هر دو از قرارداد واقعی سرویس می‌آیند:
+    #
+    #   الف) اگر `convert` لینک فایل داد، کار تمام است. طبق قرارداد سرویس،
+    #        برای عکس و PDF مسیر درست «addfile → convert → دانلود» است و
+    #        `checkconvert` نقشی ندارد. نسخهٔ قبلی اینجا همیشه checkconvert
+    #        می‌زد؛ برای عکس سرویس با InvalidParams جواب می‌داد و کار
+    #        می‌مرد — در حالی که فایل خروجی آماده و قابل دانلود بود.
+    #
+    #   ب) `checkconvert` فقط برای فایل صوتی/تصویری معنا دارد (و شاید صف).
+    #        هر خطای آن باید نادیده گرفته شود، نه اینکه کل کار را بکشد.
+    if not text.strip() and not download_url:
+        try:
+            checked = cloud_ocr.check_convert(file_token)
+        except cloud_ocr.CloudError as exc:
+            # سرویس این فایل را برای checkconvert نمی‌شناسد — یعنی مسیرش
+            # convert→download بوده، نه checkconvert. کار نباید بمیرد.
+            meta["check_error"] = exc.code
+            meta["check_error_message"] = exc.message
+            log.info("checkconvert برای کار %s معنا نداشت (%s)", job.id, exc.code)
+            checked = {}
 
-    # ── ۴) اگر لینک داشتیم ولی دانلود متن نداد، دوباره از checkconvert امتحان کن
+        if checked:
+            meta["check_status"] = checked.get("status", "")
+            if checked.get("output"):
+                text = checked["output"]
+                meta["text_source"] = "checkconvert"
+
+            lowered = checked.get("status", "").lower().replace(" ", "")
+            pending = {"converting", "inprogress", "processing", "queued", "waiting", "notready"}
+            if not text.strip() and (lowered in pending or checked.get("progress", 0) < 100):
+                for _ in range(30):
+                    time.sleep(POLL_INTERVAL)
+                    try:
+                        checked = cloud_ocr.check_convert(file_token)
+                    except cloud_ocr.CloudError as exc:
+                        # همین وضعیت ممکن است برای صف هم رخ دهد؛ صبر می‌کنیم
+                        log.info("checkconvert کار %s: %s", job.id, exc.code)
+                        meta["check_error"] = exc.code
+                        continue
+                    _update(job.id, progress=min(55 + checked.get("progress", 0) // 2, 92),
+                            message=f"پیشرفت تبدیل: {checked.get('progress', 0)}%")
+                    if checked.get("output"):
+                        text = checked["output"]
+                        meta["text_source"] = "checkconvert"
+                        break
+                    lowered = checked.get("status", "").lower().replace(" ", "")
+                    if checked.get("progress", 0) >= 100 or lowered in {"done", "finished", "completed"}:
+                        break
+                    if lowered in {"error", "failed", "notfound"}:
+                        break
+
+    # ── ۴) اگر لینک داشتیم ولی متن از فایل درنیامد، یک بار دیگر از لینک
+    #      به شکل دیگری امتحان کن (مثلاً لینک به zip یا فایل بدون پسوند).
     if not text.strip() and download_url:
         try:
             checked = cloud_ocr.check_convert(file_token)
@@ -322,7 +347,11 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
             detail.append("سرویس لینک خروجی نداد")
         if meta.get("result_suffix"):
             detail.append(f"قالب دریافتی: {meta['result_suffix']}")
-        if meta.get("check_status"):
+        # وضعیت checkconvert را فقط وقتی نشان بده که واقعاً مسیر تبدیل بوده.
+        # اگر فایل از طریق لینک آمده بود، خطای checkconvert بی‌ربط است و
+        # بردنش در پیام فقط کاربر را گمراه می‌کند (باگ واقعی: کاربر
+        # «InvalidParams» دید در حالی که فایلش سالم دانلود شده بود).
+        if meta.get("check_status") and not download_url:
             detail.append(f"وضعیت سرویس: {meta['check_status']}")
         message = "سرویس ابری خروجی متنی برنگرداند — " + " · ".join(detail) + "."
         kept = bool(saved is not None and saved.is_file() and saved.stat().st_size > 0)
@@ -332,6 +361,10 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
             # درخواست از پایه رد شده — کیفیت عکس ربطی ندارد، گفتنش گمراه‌کننده است
             message += (" این خطا از درخواست است، نه از عکس — کمی بعد دوباره تلاش کنید؛ "
                         "اگر تکرار شد به پشتیبانی بگویید.")
+        elif download_url:
+            # لینک آمده بود ولی فایل قابل خواندن نبود — مشکل از عکس نیست
+            message += (" فایل خروجی از سرویس دریافت شد ولی متن قابل استخراج نبود. "
+                        "اگر تکرار شد، قالب خروجی را در تنظیمات به «متن خام» تغییر دهید.")
         else:
             message += (" فایل را دوباره بفرستید؛ اگر تکرار شد، کیفیت عکس را بالا ببرید "
                         "(نور یکدست، بدون کج‌شدگی) یا از موتور هوش مصنوعی استفاده کنید.")
@@ -352,12 +385,35 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
 
 def _run_media(job: OcrJob, file_token: str, meta: dict) -> None:
     _update(job.id, status="converting", progress=30, message="شروع تبدیل گفتار به متن…")
-    cloud_ocr.convert_audio(file_token, language=job.language or "fa")
+    try:
+        cloud_ocr.convert_audio(file_token, language=job.language or "fa")
+    except cloud_ocr.CloudError as exc:
+        meta["convert_status"] = exc.code
+        _update(job.id, status="failed", progress=0, message=exc.message, meta=meta,
+                result_path="")
+        return
+
     started = time.time()
     text = ""
+    errors = 0
     while time.time() - started < MEDIA_TIMEOUT:
         time.sleep(POLL_INTERVAL)
-        checked = cloud_ocr.check_convert(file_token)
+        try:
+            checked = cloud_ocr.check_convert(file_token)
+        except cloud_ocr.CloudError as exc:
+            # خطای گذرا یا ناسازگاری پارامتر نباید کار را بکشد؛ چند بار صبر
+            # می‌کنیم و اگر ادامه یافت با پیام روشن می‌بندیم.
+            errors += 1
+            meta["last_check_error"] = exc.code
+            log.info("checkconvert صوتی کار %s: %s (%s)", job.id, exc.code, errors)
+            if errors >= 5:
+                _update(job.id, status="failed", progress=0, meta=meta, result_path="",
+                        message=f"وضعیت تبدیل صوتی از سرویس خوانده نشد ({exc.code}). "
+                                "دوباره تلاش کنید.")
+                return
+            continue
+
+        errors = 0
         status = checked["status"].lower()
         progress = checked["progress"]
         text = checked.get("output") or text
@@ -366,12 +422,21 @@ def _run_media(job: OcrJob, file_token: str, meta: dict) -> None:
         if progress >= 100 or status in {"done", "finished", "completed"}:
             break
         if status in {"notfound", "error", "failed", "convertterminated"}:
-            _update(job.id, status="failed", message="تبدیل گفتار به متن ناموفق بود.", progress=0)
+            _update(job.id, status="failed", progress=0, meta=meta, result_path="",
+                    message="تبدیل گفتار به متن ناموفق بود.")
             return
+
+    if not text.strip():
+        # «تبدیل تمام شد ولی متنی نبود» با «موفق» یکی نیست
+        _update(job.id, status="failed", progress=0, meta=meta, result_path="",
+                message="سرویس برای این فایل صوتی متنی برنگرداند. "
+                        "فایل را دوباره بفرستید یا کیفیت صدا را بررسی کنید.")
+        return
+
     parsed = parse_invoice(text, "audio")
     meta["parsed"] = parsed
     _update(job.id, status="done", progress=100, text=text[:400000], meta=meta,
-            message="تبدیل گفتار به متن پایان یافت.")
+            message=f"تبدیل گفتار به متن پایان یافت — {len(text):,} نویسه.")
 
 
 def retry(job_id: int) -> None:

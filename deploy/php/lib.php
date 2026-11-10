@@ -1662,6 +1662,24 @@ function job_tick(array $job, int $budget = 25): array
     if ($stage === 'wait') {
         $chk = call_gateway(array('command' => 'checkconvert', 'filetoken' => $fileToken), null, null, '', 20);
         if (!$chk['ok']) {
+            /*
+             * خطاهای گذرا → صبر کن.
+             * InvalidParams → این فایل مسیرش checkconvert نبوده (عکس/PDF
+             *   با لینک دانلود). کار نباید با یک خطای بی‌ربط بمیرد؛
+             *   کاربر فایل خروجی آماده دارد و فقط پیام گیج‌کننده می‌بیند.
+             */
+            $isParamErr = stripos((string) $chk['code'], 'invalid') === 0
+                || strcasecmp((string) $chk['code'], 'BadRequest') === 0;
+            if ($isParamErr) {
+                $job['check_unsupported'] = true;
+                $job['stage'] = 'wait';
+                $job['message'] = 'این سرویس برای این فایل خروجی متنی نمی‌دهد؛'
+                    . ' از قالب «حفظ ساختار» یا موتور هوش مصنوعی استفاده کنید.';
+                $job['status'] = 'failed';
+                $job['error'] = $chk['code'];
+                job_save($job);
+                return $job;
+            }
             if (in_array($chk['code'], array('Network', 'BadResponse'), true) && $age < 900) {
                 $job['message'] = 'در انتظار پاسخ سرویس ابری… (تلاش دوباره)';
                 job_save($job);
