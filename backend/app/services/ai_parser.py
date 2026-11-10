@@ -108,31 +108,83 @@ def _desc_and_numbers(cells: list[str], line: str) -> tuple[str, list[int]]:
     normalize فاصله‌های چندتایی را به Tab تبدیل می‌کند، پس فاکتور حرارتی هم
     ستون می‌شود؛ ولی اگر هنوز یک سلول واحد بود، از راست اعداد را جدا می‌کنیم.
     """
+    # «عدد + واحد» هم عدد حساب می‌شود: «۱۰ بسته»، «۲ عدد»، «۳ کارتن».
+    # در فاکتور فارسی ستون تعداد تقریباً همیشه واحد دارد؛ اگر فقط عدد
+    # خالص را بپذیریم، تعداد همیشه ۱ می‌ماند و مبلغ قلم صفر می‌شود.
+    num_unit = re.compile(r"^[\s\-+]?([\d,٬٫.]+)\s*([^\d]{0,12})$")
     pure_num = re.compile(r"^[\s\-+]?[\d,٬٫.]+\s*(?:%|ریال|تومان)?$")
-    texts = [c for c in cells if c and not pure_num.match(c)]
+
+    def as_number(cell: str) -> int | None:
+        c = (cell or "").strip()
+        if not c:
+            return None
+        if pure_num.match(c):
+            return _to_int(c)
+        m = num_unit.match(c)
+        if m:
+            unit = m.group(2).strip()
+            # واحد باید کوتاه و بی‌عدد باشد، وگرنه «کالای ۳ عددی» را
+            # به‌اشتباه عدد می‌گیریم
+            if unit and len(unit) <= 12 and not re.search(r"[A-Za-z]{3,}", unit):
+                return _to_int(m.group(1))
+        return None
+
+    texts = [c for c in cells if c and as_number(c) is None]
     nums: list[int] = []
     for c in reversed(cells):
-        if pure_num.match(c or ""):
-            nums.insert(0, _to_int(c))
+        val = as_number(c or "")
+        if val is not None:
+            nums.insert(0, val)
         elif nums:
             break
     if nums and texts:
         desc = max(texts, key=len).strip(" -|:،,")
         if len(desc) >= 2:
             return desc, nums
-    # سلول واحد: اعداد پایانی را از راست جدا کن
+    # سلول واحد: اعداد پایانی را از راست جدا کن.
+    #
+    # جداکننده فقط «فاصله» نیست: فاکتور فارسی معمولاً ستون‌ها را با
+    # خط تیره، ممیز عمودی یا «|» جدا می‌کند — مثل
+    #     «کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰»
+    # نسخهٔ قبلی فقط \s+ را می‌دید، پس روی فاکتور فارسی هیچ عددی
+    # پیدا نمی‌کرد و جدول اقلام خالی می‌ماند. این باگ «اقلام را
+    # تشخیص نمی‌دهد» را دقیقاً توضیح می‌دهد.
+    # جداکننده فقط «فاصله» نیست: فاکتور فارسی ستون‌ها را با خط تیره،
+    # ممیز عمودی یا «|» جدا می‌کند — مثل «کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰».
+    # نسخهٔ قبلی فقط \s+ را می‌دید و روی فاکتور فارسی هیچ عددی پیدا
+    # نمی‌کرد؛ نتیجه: «آماده» با جدول اقلام خالی.
+    #
+    # الگوی «عدد آخر» به سه شکل پذیرفته می‌شود:
+    #   ۲۵۰,۰۰۰            ← عدد خالی در انتها
+    #   ... — ۲۵۰,۰۰۰      ← با جداکننده
+    #   ۱۰ بسته — ۲۵۰,۰۰۰  ← عدد + واحد + جداکننده (حالت رایج فارسی)
+    num_pat = NUM_RE.pattern
+    last_num = re.compile(
+        r"(?:(?:[\s—–\-|│¦]+)|\s*[—–|│¦]\s*)\s*"
+        r"(?:(?P<num>" + num_pat + r")(?:\s*[آ-یa-zA-Z]{1,8})?)"
+        r"\s*$"
+    )
     work = line.strip()
     tail: list[str] = []
     while len(tail) < 6:
-        m = re.search(r"\s+(" + NUM_RE.pattern + r")\s*$", work)
+        m = last_num.search(work)
         if not m:
             break
-        tail.insert(0, m.group(1))
-        work = work[: m.start()].rstrip()
+        tail.insert(0, m.group("num"))
+        work = work[: m.start()].rstrip(" \t—–-|│¦")
     if len(tail) >= 2:
         desc = work.strip(" -|:،,")
         if len(desc) >= 2:
             return desc, [_to_int(t) for t in tail]
+
+    # یک عدد تنها با جداکننده: «خدمات نصب — ۵۰۰,۰۰۰» یا «کرایه — ۱۲۰,۰۰۰».
+    # در فاکتور فارسی این شکل (شرح — مبلغ) بسیار رایج است و اگر نخوانیم،
+    # سطر کامل از دست می‌رود. تک‌عدد در چنین سطری «مبلغ» است، نه تعداد؛
+    # تفکیک تعداد/مبلغ با علم به این قاعده در بالا انجام می‌شود.
+    if len(tail) == 1:
+        desc = work.strip(" -|:،,")
+        if len(desc) >= 2 and re.search(r"[آ-یA-Za-z]{2,}", desc):
+            return desc, [_to_int(tail[0])]
     return (line.strip(), [])
 
 
@@ -232,9 +284,12 @@ def extract_items_rules(raw_text: str, invoice_type: str | None = None) -> dict[
             continue
         cells = _split_cells(line)
         nums = _numbers_in(line)
-        if len(nums) < 2 and not header:
+        # سطری با یک عدد هم می‌تواند قلم باشد: «خدمات نصب — ۵۰۰,۰۰۰».
+        # شرط قبلی (حداقل دو عدد) این شکل رایج فاکتور فارسی را کامل
+        # دور می‌ریخت و جدول اقلام خالی می‌ماند.
+        if not nums and not header:
             continue
-        if len(cells) < 2 and len(nums) < 2:
+        if len(cells) < 2 and not nums:
             continue
 
         # توضیح کالا: سلولی که عدد نیست و طولانی‌ترین است
@@ -258,10 +313,30 @@ def extract_items_rules(raw_text: str, invoice_type: str | None = None) -> dict[
             discount = _to_int(cell("discount"))
         else:
             if len(nums) >= 3:
-                qty, price, total = nums[0], nums[1], nums[2]
+                # فاکتور فارسی: «کالا — ۱۰ بسته — ۲۵۰,۰۰۰»
+                #   nums = [10, 250000]  →  تعداد، سپس مبلغ
+                # اگر هر سه باشند، عدد کوچک‌تر «تعداد» است (تعداد کالا
+                # هرگز میلیونی نیست) و بزرگ‌ترها قیمت/جمع‌اند.
+                # نسخهٔ قبلی nums[0] را تعداد و nums[1] را قیمت واحد
+                # می‌گرفت؛ با «۱۰ بسته — ۲۵۰,۰۰۰» نتیجه qty=1 و
+                # unit_price=10 می‌شد — عدد کاملاً بی‌معنا در فاکتور.
+                a, b, c = nums[0], nums[1], nums[2]
+                if a <= 10000 and b >= 1000:
+                    qty, total = a, c if c >= b else b
+                    price = int(total / qty) if qty else total
+                else:
+                    qty, price, total = a, b, c
+            elif len(nums) == 1:
+                # یک عدد تنها در سطر «شرح — مبلغ» = مبلغ نهایی، نه قیمت واحد
+                qty, price, total = 1, 0, nums[0]
             elif len(nums) == 2:
-                price, total = nums[0], nums[1]
-                qty = 1
+                # دو عدد: کوچک‌تر تعداد، بزرگ‌تر مبلغ
+                small, big = min(nums), max(nums)
+                if small <= 10000 and big >= 1000:
+                    qty, price, total = small, int(big / small) if small else big, big
+                else:
+                    price, total = nums[0], nums[1]
+                    qty = 1
         if qty <= 0:
             qty = 1
         if not total and price:

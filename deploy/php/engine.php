@@ -258,7 +258,18 @@ if (!function_exists('fk_split_columns')) {
         if (strpos($line, "\t") !== false) {
             return array_map('trim', explode("\t", $line));
         }
-        $parts = preg_split('/\s{2,}|\s*\|\s*|\s*;\s*/u', $line);
+        /*
+         * جداکننده‌ها: تب، دو فاصله یا بیشتر، «|»، «؛» و — مهم‌تر از همه
+         * برای فاکتور فارسی — خط تیره‌های جداکنندهٔ ستون:
+         *     «کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰»
+         * نسخهٔ قبلی خط تیره را جداکننده نمی‌دانست، پس کل سطر یک سلول
+         * می‌شد و موتور هیچ عددی پیدا نمی‌کرد: فاکتور «آماده» می‌شد ولی
+         * جدول اقلام خالی بود. این همان «اقلام را تشخیص نمی‌دهد» است.
+         *
+         * نکته: خط تیره فقط وقتی جداکننده است که «فاصله‌دار» باشد،
+         * وگرنه «A4-2024» را هم می‌شکند.
+         */
+        $parts = preg_split('/\s{2,}|\s*\|\s*|\s*;\s*|\s+[—–-]+\s+|\s*[│¦]\s*/u', $line);
         $parts = array_map('trim', $parts ?: array());
         $parts = array_values(array_filter($parts, function ($p) { return $p !== ''; }));
         return $parts ?: array($line);
@@ -271,6 +282,27 @@ if (!function_exists('fk_split_columns')) {
         if ($c === '') return false;
         $c = preg_replace('/\s*(ریال|تومان|درصد|%|ت)?\s*$/u', '', $c);
         return (bool) preg_match('/^[\-\(]?[\d,٬٫.]+\)?$/', $c);
+    }
+
+    /**
+     * آیا سلول «عدد + واحد» است؟ مثل «۱۰ بسته» یا «2 عدد».
+     *
+     * چرا جدا از fk_is_number: در فاکتور فارسی ستون تعداد معمولاً واحد
+     * دارد («۱۰ بسته»، «۲ عدد»، «۵ کارتن»). fk_is_number این را عدد
+     * نمی‌داند، پس تعداد ۱ فرض می‌شد و قیمت واحد اشتباه محاسبه می‌شد —
+     * «کاغذ A4 × ۱ = ۲۵۰,۰۰۰» به‌جای «× ۱۰».
+     */
+    function fk_number_and_unit(string $cell): array
+    {
+        $c = trim(fk_digits_latin($cell));
+        if ($c === '') return array(0, '');
+        if (!preg_match('/^([\-+]?[\d,٬٫.]+)\s*([^\d]{0,12})$/u', $c, $m)) {
+            return array(0, '');
+        }
+        $amount = fk_parse_amount($m[1]);
+        $unit = trim($m[2]);
+        $unit = (string) preg_replace('/\s*(ریال|تومان|درصد|%)$/u', '', $unit);
+        return array($amount, $unit);
     }
 
     /** آیا سلول شبیه تاریخ است؟ (۱۳۹۹/۰۵/۲۱ یا 2021-05-12) */
@@ -564,9 +596,27 @@ if (!function_exists('fk_understand')) {
         if ($qty === '' && $price === '' && $total === '') {
             $nums = array();
             foreach (array_reverse($cells, true) as $i => $c) {
-                if (fk_is_number($c) && ($types[$i] ?? '') !== 'text') {
+                /* ستون «text» رد می‌شود، ولی «۱۰ بسته» هم text طبقه‌بندی
+                   شده چون عدد خالص نیست. در فاکتور فارسی همان ستون تعداد
+                   است؛ اگر فوراً ردش کنیم، تعداد همیشه ۱ می‌شود. پس
+                   «عدد + واحد» را حتی در ستون text هم می‌پذیریم. */
+                if (($types[$i] ?? '') === 'text' && !fk_is_number(fk_number_and_unit($c)[0] ? (string) fk_number_and_unit($c)[0] : '')) {
+                    if ((int) (fk_number_and_unit($c)[0]) <= 0) continue;
+                }
+                if (fk_is_number($c)) {
                     $nums[] = fk_parse_amount($c);
-                } elseif ($nums) break;
+                } elseif (fk_len(trim($c)) > 0) {
+                    /* «۱۰ بسته» / «۲ عدد» — عدد + واحد. در فاکتور فارسی
+                       این رایج‌ترین شکل ستون تعداد است. */
+                    list($amt, $u) = fk_number_and_unit($c);
+                    if ($amt > 0 && fk_len($u) <= 12) {
+                        $nums[] = $amt;
+                    } elseif ($nums) {
+                        break;
+                    }
+                } elseif ($nums) {
+                    break;
+                }
             }
             $nums = array_reverse($nums);
             $cnt = count($nums);

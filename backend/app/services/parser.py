@@ -298,7 +298,32 @@ def parse_invoice(raw_text: str, invoice_type: str | None = None) -> dict[str, A
     totals = find_totals(text)
     seller, seller_tax = find_party(text, "seller")
     buyer, buyer_tax = find_party(text, "buyer")
-    items = find_items(text)
+    # اقلام: اول موتور «فهم اقلام» (همان که در PHP هم هست و ۸۱ تست دارد)،
+    # بعد استخراج ساده. چرا: find_items فقط جدول ستون‌بندی‌شده را می‌فهمد و
+    # خط‌هایی مثل «کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰» را از دست می‌داد؛ نتیجه
+    # این بود که فاکتور «آماده» می‌شد ولی جدول اقلامش خالی می‌ماند.
+    items = []
+    try:
+        from .ai_parser import extract_items_rules
+        understood = extract_items_rules(text)
+        for raw_item in (understood.get("items") or []):
+            desc = str(raw_item.get("description") or "").strip()
+            if not desc:
+                continue
+            items.append({
+                "row_no": len(items) + 1,
+                "description": desc,
+                "code": str(raw_item.get("code") or ""),
+                "unit": str(raw_item.get("unit") or ""),
+                "quantity": raw_item.get("qty") or 0,
+                "unit_price": raw_item.get("unit_price") or 0,
+                "discount": raw_item.get("discount") or 0,
+                "total": raw_item.get("total") or 0,
+            })
+    except Exception:                                   # noqa: BLE001
+        items = []
+    if not items:
+        items = find_items(text)
 
     if not seller:
         for line in text.split("\n")[:4]:

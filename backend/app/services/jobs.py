@@ -488,6 +488,14 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
     meta["parsed"] = parsed
     meta["remote"] = True
     meta["chars"] = len(text)
+    # متن یکدست‌شده هم نگه داشته می‌شود — نسخهٔ PHP از اول این را داشت.
+    # فرقش با text: نویسه‌های عربی/فارسی یکدست، اعداد لاتین، فاصله‌های
+    # اضافی حذف. کاربر برای کپی-پیست همان را می‌خواهد.
+    try:
+        from .parser import normalize as _normalize
+        meta["text_clean"] = _normalize(text)[:400000]
+    except Exception:                               # noqa: BLE001
+        pass
 
     # ── ۵) نجات خودکار: اگر سرویس متنی نداد، خودِ تصویر را از موتور
     #      هوش مصنوعی بخوان. این همان کاری است که نسخهٔ PHP می‌کند و

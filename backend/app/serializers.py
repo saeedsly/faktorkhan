@@ -167,8 +167,22 @@ def job_public(job: OcrJob, with_text: bool = False, with_parsed: bool = True) -
                 "items", "confidence", "fields_found", "warnings",
             )
         }
-    if with_text:
+    # متن همیشه برای کارِ تمام‌شده برگردانده می‌شود.
+    #
+    # چرا: پیش‌فرضِ with_text=False باعث می‌شد کلاینتی که پارامتر را
+    # نفرستد (اپ موبایل، اسکریپت، نسخهٔ کش‌شدهٔ قدیمی، یا حتی یک
+    # اشتباه تایپی) وضعیت «آماده» ببیند ولی متن خالی — دقیقاً همان
+    # شکایتی که «اعتبار کم شد ولی متن نیامد». متن نتیجهٔ کار است،
+    # نه دادهٔ جانبی؛ پنهان‌کردنش هیچ سودی ندارد و فقط باگ می‌سازد.
+    #
+    # برای کارهای در جریان هم متن (اگر جزئی باشد) برگردانده می‌شود؛
+    # هزینه‌اش ناچیز است و کاربر پیشرفت را می‌بیند.
+    if with_text or job.status in {"done", "failed", "cancelled"}:
         data["text"] = job.text or ""
+        if meta.get("text_clean"):
+            data["text_clean"] = meta["text_clean"]
+    elif job.text:
+        data["text"] = job.text
     return data
 
 
