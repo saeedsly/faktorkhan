@@ -2,7 +2,7 @@
 
 همهٔ لینک‌ها مستقیم و بدون ورود به حساب کار می‌کنند.
 
-## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۷۲ کیلوبایت)
+## ۱) نسخهٔ PHP برای WAMP/htdocs — سریع‌ترین راه (۷۳ کیلوبایت)
 
 **دانلود:**
 https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-php-htdocs.zip
@@ -53,7 +53,7 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 
 ---
 
-## ۳) کد منبع کامل (۷۰۹ کیلوبایت)
+## ۳) کد منبع کامل (۷۱۴ کیلوبایت)
 
 **دانلود:**
 https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
@@ -88,6 +88,6 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 
 | فایل | حجم | برای |
 |---|---|---|
-| `faktorkhan-php-htdocs.zip` | ۷۲ KB | WAMP / XAMPP — ۱۲ فایل (ویندوز ۷ ✅) |
+| `faktorkhan-php-htdocs.zip` | ۷۳ KB | WAMP / XAMPP — ۱۲ فایل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۷۰۹ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۷۱۴ KB | کد منبع (با پایتون ۳.۸ روی ویندوز ۷) |
