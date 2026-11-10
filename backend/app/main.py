@@ -172,6 +172,14 @@ if FRONTEND_DIR.is_dir():
     def index():
         return FileResponse(FRONTEND_DIR / "index.html")
 
+    @app.get("/browser-check", include_in_schema=False)
+    @app.get("/browser-check.html", include_in_schema=False)
+    def browser_check():
+        """صفحهٔ تشخیص مرورگر — بدون وابستگی، برای وقتی «برنامه باز نمی‌شود»."""
+        return FileResponse(FRONTEND_DIR / "browser-check.html",
+                            media_type="text/html; charset=utf-8",
+                            headers={"Cache-Control": "no-cache"})
+
     @app.get("/favicon.svg", include_in_schema=False)
     def favicon():
         return FileResponse(FRONTEND_DIR / "assets" / "favicon.svg", media_type="image/svg+xml")

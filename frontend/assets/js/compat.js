@@ -8,14 +8,25 @@
   "use strict";
 
   function supportsModernJs() {
-    try {
-      // template literal + arrow + const + default param
-      // eslint-disable-next-line no-new-func
-      new Function("const f = (a = 1) => `x${a}`; return f(2);");
-      return true;
-    } catch (e) {
-      return false;
-    }
+    /*
+     * هیچ کدی از رشته اجرا نمی‌کنیم (نه new Function، نه eval).
+     * نسخهٔ قبلی برای «آزمودن» پشتیبانی جاوااسکریپت یک تابع با new Function
+     * می‌ساخت؛ CSP پیش‌فرض برنامه 'unsafe-eval' را ممنوع می‌کند، پس آن فراخوانی
+     * با EvalError رد می‌شد و نتیجهٔ دروغ «مرورگر قدیمی» می‌داد — روی کروم
+     * تازه‌به‌روزرسانی‌شده.
+     *
+     * بررسی واقعی: وجود سازنده‌های استاندارد ES2015+ که فاکتورخوان
+     * استفاده می‌کند. اگر همه باشند، مرورگر به‌اندازهٔ کافی مدرن است.
+     * خودِ این فایل هم با ES5 نوشته شده، پس در مرورگر بسیار قدیمی هم
+     * بی‌خطا اجرا می‌شود و به این تابع می‌رسد.
+     */
+    return typeof Symbol === "function"
+      && typeof Map === "function"
+      && typeof Set === "function"
+      && typeof Promise === "function"
+      && typeof Object.assign === "function"
+      && typeof Array.prototype.includes === "function"
+      && typeof String.prototype.startsWith === "function";
   }
 
   var problems = [];
@@ -32,62 +43,105 @@
     problems.push("حافظهٔ محلی (localStorage)");
   }
 
+  /*
+   * فقط نبودِ قابلیت‌های بنیادی، برنامه را متوقف می‌کند.
+   * نبودِ localStorage کشنده نیست (لایهٔ ذخیره‌سازی سه‌سطحی داریم)، پس
+   * نباید کل برنامه را بلاک کند — قبلاً همین کار باعث می‌شد کاربر در حالت
+   * حریم خصوصی، صفحهٔ هشدار تمام‌صفحه ببیند.
+   */
+  var HARD = ["نحو جاوااسکریپت مدرن", "fetch", "Promise", "JSON"];
+  var hardFatal = problems.some(function (p) { return HARD.indexOf(p) !== -1; });
+
   window.FKCompat = {
     ok: problems.length === 0,
     problems: problems,
+    hardFatal: hardFatal,
     isOldIE: !!document.documentMode,
     isIE11: /Trident\/7/.test(navigator.userAgent || ""),
   };
 
+  /*
+   * متغیر قدیمی: در نسخه‌های پیشین برنامه با آن بررسی می‌کرد که آیا باید
+   * متوقف شود. هیچ‌جای کد آن را نمی‌خواند؛ برای سازگاری نگه داشته شده و
+   * همیشه false است — یعنی این فایل هرگز جلوی اجرای برنامه را نمی‌گیرد.
+   */
+  window.FKBlocksApp = false;
+
   if (problems.length === 0) return;
 
-  function uaName() {
-    var ua = navigator.userAgent || "";
-    if (/MSIE|Trident/.test(ua)) return "Internet Explorer " + (document.documentMode || 11);
-    if (/Firefox/.test(ua)) return "Firefox (نسخهٔ قدیمی)";
-    if (/Chrome/.test(ua)) return "Chrome (نسخهٔ قدیمی)";
-    if (/Safari/.test(ua)) return "Safari (نسخهٔ قدیمی)";
-    return "مرورگر شما";
+  /* مشکل نرم (مثل localStorage) → فقط لاگ کن و بگذار برنامه کار کند */
+  if (!hardFatal) {
+    try {
+      if (window.console && console.warn) {
+        console.warn("[فاکتورخوان] محدودیت مرورگر:", problems.join("، "),
+          "— برنامه با حافظهٔ موقت ادامه می‌دهد.");
+      }
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
   }
 
   function show() {
-    var box = document.createElement("div");
-    box.setAttribute("id", "fk-compat-warning");
-    box.setAttribute("role", "alert");
-    box.style.cssText = [
-      "position:fixed", "top:0", "right:0", "bottom:0", "left:0",
-      "width:100%", "height:100%", "overflow:auto", "z-index:99999",
-      "background:#0b0d12", "color:#f2f4f8",
+    /*
+     * این یک «نوار هشدار» است، نه صفحهٔ مسدودکننده.
+     *
+     * درس گرفته‌شده: نسخهٔ قبلی یک لایهٔ تمام‌صفحه با z-index بسیار بالا می‌کشید و
+     * هم‌زمان هیچ‌جای برنامه FKBlocksApp را نمی‌خواند؛ نتیجه این بود که کاربر
+     * پیام «مرورگر پشتیبانی نمی‌شود» می‌دید، در حالی که برنامه هم زیرش کار می‌کرد —
+     * بدترین حالت. حالا فقط یک نوار باریک بالای صفحه نشان می‌دهیم که با یک
+     * کلیک بسته می‌شود و هرگز جلوی دکمهٔ ورود را نمی‌گیرد.
+     */
+    var bar = document.createElement("div");
+    bar.setAttribute("id", "fk-compat-warning");
+    bar.setAttribute("role", "status");
+    bar.style.cssText = [
+      "position:sticky", "top:0", "left:0", "right:0", "z-index:9998",
+      "background:#2a2416", "color:#e7d9a8", "border-bottom:1px solid #4a3f24",
       "font-family:Tahoma,Vazirmatn,sans-serif", "direction:rtl",
-      "display:flex", "align-items:center", "justify-content:center",
-      "padding:24px", "text-align:right", "line-height:2",
+      "padding:9px 14px", "font-size:12.5px", "line-height:1.9",
+      "display:flex", "align-items:center", "gap:10px", "flex-wrap:wrap",
     ].join(";");
-    box.innerHTML =
-      '<div style="max-width:640px;background:#141824;border:1px solid #2a3142;border-radius:16px;padding:28px">' +
-      '<div style="font-size:34px;margin-bottom:8px">⚠️</div>' +
-      '<h1 style="font-size:20px;margin:0 0 10px;color:#e7c873">این مرورگر پشتیبانی نمی‌شود</h1>' +
-      '<p style="margin:0 0 12px;color:#c9d1e0">' +
-      "شما با <strong>" + uaName() + "</strong> باز کرده‌اید. فاکتورخوان برای امنیت و سرعت به " +
-      "مرورگرهای امروزی نیاز دارد و در این مرورگر دکمهٔ ورود کار نمی‌کند." +
-      "</p>" +
-      '<p style="margin:0 0 14px;color:#9aa4b8;font-size:13px">ویژگی‌های ناموجود: ' +
-      problems.join("، ") + "</p>" +
-      '<div style="background:#1b2130;border-radius:12px;padding:14px;color:#c9d1e0;font-size:14px">' +
-      "<strong>راه‌حل (یکی را انتخاب کنید):</strong><br>" +
-      "۱) <strong>Firefox ESR 115</strong> یا <strong>Chrome 109</strong> را نصب کنید — آخرین نسخه‌هایی که روی ویندوز ۷ کار می‌کنند.<br>" +
-      "۲) اگر روی ویندوز ۱۰/۱۱ هستید، همان مرورگر را به‌روزرسانی کنید.<br>" +
-      "۳) برنامه را از همان کامپیوتر با <code style=\"direction:ltr\">http://127.0.0.1:8000</code> باز کنید." +
-      "</div>" +
-      '<p style="margin:14px 0 0;color:#6f7a8f;font-size:12px">فاکتورخوان — نسخهٔ وب</p>' +
-      "</div>";
-    (document.body || document.documentElement).appendChild(box);
+
+    var txt = document.createElement("span");
+    txt.style.cssText = "flex:1;min-width:200px";
+    txt.innerHTML = (hardFatal
+      ? "⚠️ <strong>مرورگر شما بخشی از قابلیت‌های لازم را ندارد.</strong> "
+      : "ℹ️ یک محدودیت جزئی مرورگر دیده شد. ")
+      + "مورد: " + esc(problems.join("، "))
+      + (hardFatal
+        ? " — اگر دکمه‌ای کار نکرد، مرورگر را به‌روز کنید یا با Firefox/Chrome تازه باز کنید."
+        : " — برنامه با حافظهٔ موقت ادامه می‌دهد.");
+    bar.appendChild(txt);
+
+    var close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "بستن ×";
+    close.style.cssText = "background:none;border:1px solid #4a3f24;color:#e7d9a8;" +
+      "border-radius:6px;padding:3px 10px;font-family:inherit;font-size:12px;cursor:pointer";
+    close.onclick = function () {
+      try { bar.parentNode.removeChild(bar); } catch (e) { /* ignore */ }
+    };
+    bar.appendChild(close);
+
+    var host = document.body || document.documentElement;
+    if (host.firstChild) { host.insertBefore(bar, host.firstChild); }
+    else { host.appendChild(bar); }
   }
 
+  /*
+   * readyState در اسکریپت‌های defer/async می‌تواند "interactive" باشد، یعنی
+   * DOMContentLoaded قبلاً رخ داده — پس فقط به رویداد تکیه نمی‌کنیم، وگرنه
+   * هشدار هرگز نمایش داده نمی‌شود.
+   */
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", show);
   } else {
     show();
   }
-  // سایر اسکریپت‌ها را متوقف نکن؛ فقط هشدار را نشان بده و از اجرای برنامه جلوگیری کن.
-  window.FKBlocksApp = true;
+
 })();

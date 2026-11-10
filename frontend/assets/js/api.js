@@ -59,10 +59,21 @@ const API = (() => {
 
   let onUnauthorized = () => {};
   const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
-  /** اگر token نتواند ذخیره شود، ورود ظاهراً موفق است ولی کاربر بیرون می‌ماند. */
-  const storageWarning = () => (store.mode === "memory"
-    ? "مرورگر اجازهٔ ذخیرهٔ نشست نمی‌دهد. این صفحه را در یک تب مستقیم (نه داخل iframe) باز کنید."
-    : "");
+  /**
+   * اگر token نتواند ذخیره شود، ورود ظاهراً موفق است ولی با رفرش بیرون می‌ماند.
+   * علت‌های رایج و راه‌حل هرکدام را صریح می‌گوییم — پیام مبهم «مرورگر مشکل دارد»
+   * به کاربر کمکی نمی‌کند.
+   */
+  const storageWarning = () => {
+    if (store.mode !== "memory") return "";
+    const inFrame = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+    if (inFrame) {
+      return "این صفحه داخل یک قاب (iframe) باز شده و مرورگر اجازهٔ ذخیرهٔ نشست نمی‌دهد. "
+        + "آن را در یک تب مستقیم باز کنید تا ورود ماندگار شود.";
+    }
+    return "مرورگر ذخیرهٔ نشست را مسدود کرده (حالت ناشناس یا مسدودکردن کوکی‌ها). "
+      + "اکنون می‌توانید کار کنید، ولی با بستن تب باید دوباره وارد شوید.";
+  };
 
   async function request(path, { method = "GET", body, headers = {}, raw = false, form = false } = {}) {
     const opts = { method, headers: { ...headers } };

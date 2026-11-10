@@ -157,6 +157,7 @@ foreach ($checks as $c) {
   </div>
 
   <div class="card" style="font-size:12.5px;color:#98a2b8">
+    <p>اگر مرورگر پیام «پشتیبانی نمی‌شود» داد: <a href="browser-check.php">browser-check.php</a> — می‌گوید کدام قابلیت کم است.</p>
     <p>برای دیدن پاسخ کامل سرویس ابری: <a href="diag.php">diag.php</a></p>
     <p>برای بازگشت: <a href="index.php">index.php</a></p>
     <p class="warn">پس از پایان کار، فایل‌های check.php و diag.php را پاک کنید.</p>

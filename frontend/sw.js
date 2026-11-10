@@ -1,7 +1,7 @@
 /* سرویس‌ورکر فاکتورخوان — استراتژی: شبکه اول، کش فقط برای آفلاین
    هدف: بعد از هر به‌روزرسانی، مرورگر هرگز نسخهٔ قدیمیِ جاافتاده را اجرا نکند
    (این عامل «گیر کردن صفحهٔ ورود» بعد از آپدیت است). */
-const CACHE = "faktorkhan-v2";
+const CACHE = "faktorkhan-v3";   // v3: رفع باگ پیام اشتباه «مرورگر قدیمی»
 const SHELL = ["/", "/assets/css/app.css", "/assets/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
