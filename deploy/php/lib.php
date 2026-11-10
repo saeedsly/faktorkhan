@@ -14,10 +14,15 @@
  *   درخواست انجام می‌شود (کمتر از چند ثانیه) و پیگیری وضعیت در درخواست‌های
  *   کوتاه بعدی. مرورگر با AJAX هر ۳ ثانیه وضعیت را می‌پرسد.
  */
-require_once __DIR__ . '/engine.php';   // موتور پاکسازی و فهم متن فاکتور
-
-
 declare(strict_types=1);
+
+/*
+ * نکتهٔ حیاتی: declare(strict_types=1) باید اولین «دستور» فایل باشد.
+ * اگر require_once یا هر دستور دیگری قبل از آن بیاید، PHP با خطای
+ * «strict_types declaration must be the very first statement» متوقف می‌شود.
+ * (کامنت مجاز است؛ دستور نه. ترتیب این دو خط را عوض نکنید.)
+ */
+require_once __DIR__ . '/engine.php';   // موتور پاک‌سازی و فهم متن فاکتور
 
 const FK_CONFIG = __DIR__ . '/fk-config.json';
 const FK_JOBS = __DIR__ . '/fk-jobs';
