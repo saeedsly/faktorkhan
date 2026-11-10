@@ -29,6 +29,103 @@ const FK_JOBS = __DIR__ . '/fk-jobs';
 const FK_UPLOADS = __DIR__ . '/fk-uploads';
 const FK_LOCK = __DIR__ . '/fk-lock.json';
 
+/* ══════════════════════ محدودیت تلاش ورود ══════════════════════
+ *
+ * بدون این، هر کسی می‌تواند روی اینترنت گذرواژه را بی‌نهایت امتحان کند.
+ * sleep داخل کد جلوی حملهٔ موازی را نمی‌گیرد (مهاجم ۵۰ درخواست هم‌زمان
+ * می‌فرستد و ۵۰ هسته‌ی PHP همه با هم می‌خوابند؛ یا اصلاً بی‌خواب).
+ *
+ * راهکار: شمارندهٔ شکست به ازای «اثر انگشت دستگاه» در فایل، با پنجرهٔ
+ * زمانی. کاربر واقعی که گذرواژه را اشتباه می‌زند جریمه نمی‌شود؛ فقط
+ * تلاش‌های پی‌درپی بلوکه می‌شوند.
+ *
+ * IP تنها کافی نیست: چند کاربر پشت یک NAT دفتر کار می‌کنند. اما برای
+ * ورود، IP هم مهم است — چون حدس گذرواژه معمولاً از یک منبع می‌آید.
+ * پس هر دو کلید نگه داشته می‌شوند.
+ */
+
+const FK_LOGIN_WINDOW = 900;      // ۱۵ دقیقه
+const FK_LOGIN_MAX    = 8;        // حداکثر تلاش ناموفق در پنجره
+
+/** مسیر فایل شمارندهٔ تلاش‌های ناموفق */
+function login_attempts_file(): string
+{
+    return __DIR__ . '/fk-login-attempts.json';
+}
+
+/** کلید دستگاه: IP + اثر انگشت مرورگر (بدون ذخیرهٔ چیز حساس) */
+function login_key(): string
+{
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+    $ua = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+    $lang = (string) ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '');
+    return substr(hash('sha256', $ip . '|' . $ua . '|' . $lang), 0, 20);
+}
+
+/** خواندن امن شمارنده‌ها (پاک‌سازی قدیمی‌ها) */
+function login_attempts_load(): array
+{
+    $raw = @file_get_contents(login_attempts_file());
+    $data = $raw ? json_decode($raw, true) : array();
+    if (!is_array($data)) {
+        return array();
+    }
+    $now = time();
+    $clean = array();
+    foreach ($data as $k => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (($now - (int) ($row['first'] ?? 0)) < FK_LOGIN_WINDOW) {
+            $clean[$k] = $row;
+        }
+    }
+    return $clean;
+}
+
+/**
+ * آیا این دستگاه باید فعلاً مسدود باشد؟
+ * @return array [مسدود؟, ثانیهٔ باقی‌مانده]
+ */
+function login_blocked(): array
+{
+    $row = login_attempts_load()[login_key()] ?? null;
+    if (!is_array($row)) {
+        return array(false, 0);
+    }
+    if ((int) ($row['count'] ?? 0) < FK_LOGIN_MAX) {
+        return array(false, 0);
+    }
+    $left = FK_LOGIN_WINDOW - (time() - (int) ($row['first'] ?? 0));
+    return array($left > 0, max(0, $left));
+}
+
+/** ثبت یک تلاش ناموفق */
+function login_fail(): void
+{
+    $key = login_key();
+    $all = login_attempts_load();
+    $row = $all[$key] ?? array('first' => time(), 'count' => 0);
+    $row['count'] = (int) $row['count'] + 1;
+    $row['last'] = time();
+    $all[$key] = $row;
+    @file_put_contents(login_attempts_file(),
+        json_encode($all, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    @chmod(login_attempts_file(), 0600);
+}
+
+/** پاک‌کردن شمارنده بعد از ورود موفق */
+function login_success(): void
+{
+    $key = login_key();
+    $all = login_attempts_load();
+    if (isset($all[$key])) {
+        unset($all[$key]);
+        @file_put_contents(login_attempts_file(),
+            json_encode($all, JSON_UNESCAPED_UNICODE), LOCK_EX);
+    }
+}
+
 /* ══════════════════════════ مبنا ══════════════════════════ */
 
 function is_https(): bool
@@ -1226,6 +1323,216 @@ function job_gc(): void
     foreach (@glob(FK_UPLOADS . '/*.tmp') ?: array() as $f) {
         @unlink($f);
     }
+}
+
+/**
+ * بارگذاری کار با «بررسی مالکیت».
+ *
+ * چرا لازم است: کارها با شناسه در پوشهٔ مشترک ذخیره می‌شوند. بدون این
+ * تابع، هر کاربر واردشده‌ای که شناسهٔ یک کار دیگر را حدس بزند (یا از
+ * لاگ/تاریخچه ببیند) می‌توانست متن فاکتور، فایل Word یا حتی فایل
+ * اصلی او را دانلود کند. این همان نشت اطلاعات بین کاربران است که
+ * نباید هرگز رخ دهد.
+ *
+ * قاعده: کار فقط وقتی به کاربر داده می‌شود که شناسه‌اش در فهرست کارهای
+ * همین نشست باشد. سیاست «انکار پیش‌فرض» — نه «شناسه تصادفی کافی است».
+ *
+ * @param string     $id      شناسهٔ کار
+ * @param array|null $allowed فهرست شناسه‌های مجاز (پیش‌فرض: کارهای همین نشست)
+ * @return array|null کار یا null
+ */
+function job_load_owned(string $id, ?array $allowed = null): ?array
+{
+    $id = (string) preg_replace('/[^A-Za-z0-9\-]/', '', $id);
+    if ($id === '') {
+        return null;
+    }
+    if ($allowed === null) {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            start_session();
+        }
+        $allowed = (array) ($_SESSION['jobs'] ?? array());
+    }
+    $allowed = array_map('strval', $allowed);
+    if (!in_array($id, $allowed, true)) {
+        return null;                 /* مالک نیست، حتی اگر فایل باشد */
+    }
+    return job_load($id);
+}
+
+/**
+ * ثبت کار در فهرست نشست (مالکیت) — بعد از ساخت موفق کار صدا زده می‌شود.
+ */
+function job_claim(string $id): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        start_session();
+    }
+    $ids = (array) ($_SESSION['jobs'] ?? array());
+    $id = (string) preg_replace('/[^A-Za-z0-9\-]/', '', $id);
+    if ($id !== '' && !in_array($id, $ids, true)) {
+        $ids[] = $id;
+        $_SESSION['jobs'] = $ids;
+    }
+}
+
+/**
+ * بارگذاری یک‌بارهٔ همهٔ کارهای یک نشست.
+ *
+ * صفحهٔ اصلی هم آمار می‌خواهد و هم فهرست؛ بدون این تابع هر فایل JSON
+ * دو بار خوانده می‌شود. روی هاست اشتراکی با دیسک کند، تفاوتش محسوس است.
+ *
+ * @return array شناسه => کار
+ */
+function job_load_many(array $ids): array
+{
+    $out = array();
+    foreach ($ids as $jid) {
+        $jid = (string) $jid;
+        if ($jid === '' || isset($out[$jid])) {
+            continue;
+        }
+        $job = job_load($jid);
+        if (is_array($job)) {
+            $out[$jid] = $job;
+        }
+    }
+    return $out;
+}
+
+/**
+ * فهرست کارهای این نشست، برای «تاریخچهٔ فاکتورها».
+ *
+ * هر کار در یک فایل JSON است، پس فهرست‌کردن ساده و سریع است. فیلتر
+ * جستجو روی نام فایل، متن فاکتور و شمارهٔ فاکتور انجام می‌شود تا کاربر
+ * بتواند بین ده‌ها فاکتور قبلی فاکتور مورد نظرش را پیدا کند.
+ *
+ * @param array  $ids    شناسه‌های کارهای این نشست
+ * @param string $query  عبارت جستجو (خالی = همه)
+ * @param int    $limit  حداکثر تعداد
+ * @return array فهرست خلاصهٔ کارها، تازه‌ترین اول
+ */
+function job_list(array $ids, string $query = '', int $limit = 50, ?array $loaded = null): array
+{
+    $out = array();
+    $q = trim($query);
+    $q = function_exists('mb_strtolower') ? mb_strtolower($q, 'UTF-8') : strtolower($q);
+
+    foreach (array_reverse($ids) as $jid) {
+        /* اگر فهرست کارها از قبل خوانده شده، دوباره از دیسک نخوان.
+           خواندن دوبارهٔ هر فایل JSON برای صفحه‌ای با ۵۰ فاکتور،
+           ۵۰ بار I/O اضافه است — روی هاست‌های اشتراکی محسوس است. */
+        $job = $loaded !== null
+            ? ($loaded[(string) $jid] ?? null)
+            : job_load((string) $jid);
+        if (!is_array($job)) {
+            continue;
+        }
+        if ($q !== '') {
+            $hay = (string) ($job['name'] ?? '') . "\n"
+                . (string) ($job['text'] ?? '') . "\n"
+                . (string) ($job['text_clean'] ?? '') . "\n"
+                . (string) ($job['invoice_no'] ?? '');
+            $hay = function_exists('mb_strtolower') ? mb_strtolower($hay, 'UTF-8') : strtolower($hay);
+            if (strpos($hay, $q) === false) {
+                continue;
+            }
+        }
+        $u = is_array($job['understood'] ?? null) ? $job['understood'] : array();
+        $totals = is_array($u['totals'] ?? null) ? $u['totals'] : array();
+        $out[] = array(
+            'id' => (string) $job['id'],
+            'name' => (string) ($job['name'] ?? ''),
+            'status' => (string) ($job['status'] ?? ''),
+            'message' => (string) ($job['message'] ?? ''),
+            'created' => (int) ($job['created_at'] ?? 0),
+            'created_fa' => function_exists('fk_fa_date') ? fk_fa_date((int) ($job['created_at'] ?? 0)) : '',
+            'chars' => (int) ($job['charcount'] ?? 0),
+            'items' => (int) ($u['item_count'] ?? 0),
+            'total' => (int) ($totals['total'] ?? 0),
+            'has_text' => trim((string) ($job['text'] ?? '')) !== '',
+            'docx' => (string) ($job['docx'] ?? '') !== '',
+        );
+        if (count($out) >= $limit) {
+            break;
+        }
+    }
+    return $out;
+}
+
+/**
+ * جمع‌بندی همهٔ فاکتورهای یک نشست — داشبورد بالای صفحه.
+ *
+ * کاربری که روزی ۲۰ فاکتور می‌خواند می‌خواهد بداند چقدر کار کرده و
+ * جمع مبالغ چقدر بوده. این عدد از همان کارهای ذخیره‌شده محاسبه می‌شود؛
+ * هیچ درخواست شبکه‌ای لازم نیست.
+ *
+ * @return array {count, ok, failed, chars, total, items}
+ */
+function job_stats(array $ids, ?array $loaded = null): array
+{
+    $s = array('count' => 0, 'ok' => 0, 'failed' => 0, 'chars' => 0,
+               'total' => 0, 'items' => 0);
+    foreach ($ids as $jid) {
+        $job = $loaded !== null
+            ? ($loaded[(string) $jid] ?? null)
+            : job_load((string) $jid);
+        if (!is_array($job)) {
+            continue;
+        }
+        $s['count']++;
+        $st = (string) ($job['status'] ?? '');
+        if ($st === 'done') {
+            $s['ok']++;
+        } elseif ($st === 'failed') {
+            $s['failed']++;
+        }
+        $s['chars'] += (int) ($job['charcount'] ?? 0);
+        $u = is_array($job['understood'] ?? null) ? $job['understood'] : array();
+        $totals = is_array($u['totals'] ?? null) ? $u['totals'] : array();
+        $s['total'] += (int) ($totals['total'] ?? 0);
+        $s['items'] += (int) ($u['item_count'] ?? 0);
+    }
+    return $s;
+}
+
+/**
+ * خروجی CSV از چند فاکتور — برای اکسل.
+ *
+ * چرا مهم است: کاربری که فاکتورهای ماه را خوانده باید بتواند همه را
+ * یک‌جا در اکسل باز کند، نه اینکه ۲۰ بار کپی-پیست کند.
+ * BOM اضافه می‌شود تا اکسل فارسی را درست نشان دهد (بدون BOM، اکسل
+ * فایل UTF-8 را «عربی» می‌خواند و همه‌چیز به‌هم می‌ریزد).
+ */
+function job_csv(array $ids): string
+{
+    $rows = array();
+    $rows[] = array('فایل', 'تاریخ', 'وضعیت', 'تعداد اقلام', 'جمع کل', 'تعداد نویسه', 'متن');
+    foreach (array_reverse($ids) as $jid) {
+        $job = job_load((string) $jid);
+        if (!$job) {
+            continue;
+        }
+        $u = is_array($job['understood'] ?? null) ? $job['understood'] : array();
+        $totals = is_array($u['totals'] ?? null) ? $u['totals'] : array();
+        $rows[] = array(
+            (string) ($job['name'] ?? ''),
+            function_exists('fk_fa_date') ? fk_fa_date((int) ($job['created_at'] ?? 0)) : '',
+            (string) ($job['status'] ?? ''),
+            (string) (int) ($u['item_count'] ?? 0),
+            (string) (int) ($totals['total'] ?? 0),
+            (string) (int) ($job['charcount'] ?? 0),
+            str_replace(array("\r\n", "\r"), " / ", (string) ($job['text'] ?? '')),
+        );
+    }
+    $fh = fopen('php://temp', 'r+');
+    foreach ($rows as $r) {
+        fputcsv($fh, $r, ',', '"', "\\");
+    }
+    rewind($fh);
+    $csv = (string) stream_get_contents($fh);
+    fclose($fh);
+    return "\xEF\xBB\xBF" . $csv;
 }
 
 /**

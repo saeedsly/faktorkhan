@@ -55,7 +55,7 @@ if ($api !== '') {
     /* ── وضعیت کار ─────────────────────────────────────────── */
     if ($api === 'job') {
         $id = (string) ($_GET['id'] ?? '');
-        $job = job_load($id);
+        $job = job_load_owned($id);
         if ($job === null) {
             json_out(array('ok' => false, 'error' => 'notfound', 'message' => 'این کار پیدا نشد.'), 404);
         }
@@ -100,7 +100,7 @@ if ($api !== '') {
     /* ── لغو کار ───────────────────────────────────────────── */
     if ($api === 'cancel') {
         $id = (string) ($_GET['id'] ?? '');
-        $job = job_load($id);
+        $job = job_load_owned($id);
         if ($job === null) {
             json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
         }
@@ -123,7 +123,7 @@ if ($api !== '') {
     /* ── حذف فایل‌های ذخیره‌شدهٔ یک کار (متن در کار می‌ماند) ─── */
     if ($api === 'deletefiles') {
         $id = (string) ($_GET['id'] ?? '');
-        $job = job_load($id);
+        $job = job_load_owned($id);
         if ($job === null) {
             json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
         }
@@ -135,7 +135,7 @@ if ($api !== '') {
     /* ── دانلود فایل‌های همین کار (متن TXT یا فایل Word) ───── */
     if ($api === 'file') {
         $id = (string) ($_GET['id'] ?? '');
-        $job = job_load($id);
+        $job = job_load_owned($id);
         if ($job === null) {
             json_out(array('ok' => false, 'message' => 'کار پیدا نشد.'), 404);
         }
@@ -253,10 +253,15 @@ if ($api !== '') {
             job_save($job);
         }
 
-        /* شناسهٔ کار را در نشست نگه می‌داریم تا بعد از رفرش هم قابل بازیابی باشد */
+        /* شناسهٔ کار را در نشست نگه می‌داریم تا بعد از رفرش هم قابل بازیابی باشد.
+           سقف ۲۰۰ (نه ۲۰): با کم‌کردن به ۲۰، فاکتور بیست‌ویکم فاکتور اول را
+           از فهرست مالکیت بیرون می‌انداخت و کاربر دیگر نمی‌توانست فاکتور
+           قدیمی خودش را باز کند («کار پیدا نشد»). */
+        job_claim((string) $job['id']);
         $ids = (array) ($_SESSION['jobs'] ?? array());
-        $ids[] = $job['id'];
-        $_SESSION['jobs'] = array_slice($ids, -20);
+        if (count($ids) > 200) {
+            $_SESSION['jobs'] = array_slice($ids, -200);
+        }
         $freeSession();
 
         json_out(array(
@@ -297,12 +302,22 @@ if ($method === 'POST' && $action === 'login') {
         flash('error', 'درخواست نامعتبر است. صفحه را دوباره باز کنید.');
         redirect();
     }
+    /* محدودیت تلاش: جلوی حدس گذرواژه را می‌گیرد، بدون اذیت کاربر واقعی */
+    list($blocked, $wait) = login_blocked();
+    if ($blocked) {
+        $mins = max(1, (int) ceil($wait / 60));
+        flash('error', 'تلاش‌های ناموفق زیاد بود. ' . $mins
+            . ' دقیقهٔ دیگر دوباره امتحان کنید (یا مرورگر دیگری را باز کنید).');
+        redirect();
+    }
     $hash = (string) (load_config()['password_hash'] ?? '');
     if ($hash === '' || !password_verify((string) ($_POST['password'] ?? ''), $hash)) {
-        usleep(700000);
+        login_fail();
+        usleep(400000);
         flash('error', 'گذرواژه اشتباه است.');
         redirect();
     }
+    login_success();
     session_regenerate_id(true);
     $_SESSION['auth'] = true;
     redirect();
@@ -421,6 +436,56 @@ if ($method === 'GET' && isset($_GET['cleanup'])) {
     redirect();
 }
 
+/* ═══════════ خروجی CSV از همهٔ فاکتورهای این نشست ═══════════
+ *
+ * کاربری که فاکتورهای یک ماه را خوانده باید بتواند همه را یک‌جا در
+ * اکسل باز کند. بدون این، باید ده‌ها بار کپی-پیست کند.
+ */
+if ($method === 'GET' && isset($_GET['csv'])) {
+    if (!is_logged_in()) {
+        redirect();
+    }
+    start_session();
+    $ids = (array) ($_SESSION['jobs'] ?? array());
+    @session_write_close();
+    if (!$ids) {
+        flash('error', 'هنوز فاکتوری در این نشست خوانده نشده است.');
+        redirect();
+    }
+    $csv = job_csv($ids);
+    $name = 'faktorkhan-' . date('Ymd-His') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $name . '"');
+    header('Content-Length: ' . strlen($csv));
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo $csv;
+    exit;
+}
+
+/* ═══════════ حذف یک کار از تاریخچه ═══════════ */
+if ($method === 'POST' && $action === 'forget_job') {
+    if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
+        flash('error', 'دسترسی غیرمجاز.');
+        redirect();
+    }
+    start_session();
+    $del = (string) ($_POST['id'] ?? '');
+    $ids = (array) ($_SESSION['jobs'] ?? array());
+    $ids = array_values(array_filter($ids, static function ($x) use ($del) {
+        return (string) $x !== $del;
+    }));
+    $_SESSION['jobs'] = $ids;
+    @session_write_close();
+    $job = job_load($del);
+    if ($job) {
+        job_delete_files($job);
+        @unlink(job_path($del));
+    }
+    flash('ok', 'فاکتور از تاریخچه حذف شد.');
+    redirect();
+}
+
 /* ═══════════════════════════ نمایش ═══════════════════════════ */
 
 $flash = take_flash();
@@ -436,23 +501,19 @@ $uploadMax = (string) ini_get('upload_max_filesize');
 $postMax = (string) ini_get('post_max_size');
 $csrf = csrf_token();
 
-/* کارهای اخیر این نشست (برای بازیابی بعد از رفرش) */
+/* تاریخچهٔ این نشست: آمار + فهرست قابل جستجو */
 $recent = array();
+$stats = array('count' => 0, 'ok' => 0, 'failed' => 0, 'chars' => 0, 'total' => 0, 'items' => 0);
+$allJobs = array();
+$historyQuery = '';
 if ($logged) {
     start_session();
-    $ids = (array) ($_SESSION['jobs'] ?? array());
-    foreach (array_slice(array_reverse($ids), 0, 5) as $jid) {
-        $j = job_load((string) $jid);
-        if ($j) {
-            $recent[] = array(
-                'id' => $j['id'],
-                'name' => (string) ($j['name'] ?? ''),
-                'status' => $j['status'],
-                'message' => $j['message'],
-                'updated' => (int) $j['updated_at'],
-            );
-        }
-    }
+    $allJobs = (array) ($_SESSION['jobs'] ?? array());
+    @session_write_close();          /* فایل نشست را آزاد کن؛ بقیهٔ درخواست‌ها معطل نمانند */
+    $historyQuery = trim((string) ($_GET['q'] ?? ''));
+    $loadedJobs = job_load_many($allJobs);      /* یک بار خواندن، دو بار استفاده */
+    $stats = job_stats($allJobs, $loadedJobs);
+    $recent = job_list($allJobs, $historyQuery, 50, $loadedJobs);
 }
 ?>
 <!DOCTYPE html>
@@ -549,6 +610,22 @@ if ($logged) {
   .kpi div{background:#0e121b;border:1px solid var(--line);border-radius:12px;padding:9px 14px;font-size:12px;color:var(--dim)}
   .kpi b{display:block;font-size:17px;color:var(--txt)}
   .job-row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  /* ─── تاریخچه و داشبورد ─── */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin:0 0 14px}
+  .stat{background:#0f141e;border:1px solid var(--line);border-radius:12px;padding:11px 12px}
+  .stat b{display:block;font-size:19px;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1.4}
+  .stat span{font-size:11px;color:var(--dim)}
+  .hsearch{display:flex;gap:8px;margin:0 0 10px}
+  .hsearch input{flex:1}
+  .hlist{display:flex;flex-direction:column;gap:0}
+  .hitem{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid rgba(37,44,59,.6);font-size:12.5px}
+  .hitem:last-child{border-bottom:none}
+  .hitem .hname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hitem .hmeta{color:var(--dim);font-size:11px;white-space:nowrap}
+  .hitem .hact{display:flex;gap:6px;flex-shrink:0}
+  .hitem .hact button{padding:5px 10px;font-size:11.5px;border-radius:8px}
+  .hempty{padding:18px 0;text-align:center;color:var(--dim);font-size:12.5px}
+  .hint{font-size:11.5px;color:var(--dim);margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -775,21 +852,72 @@ if ($logged) {
       </div>
     </div>
 
-    <?php if ($recent): ?>
+    <?php if ($allJobs): ?>
       <div class="card">
-        <h2>🕘 کارهای اخیر</h2>
-        <?php foreach ($recent as $r): ?>
-          <div class="job-row">
-            <span class="ltr" style="color:var(--dim)"><?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?></span>
-            <span>
-              <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
-                <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در حال پردازش')) ?>
-              </span>
-              <button class="ghost" type="button" data-job="<?= h($r['id']) ?>">نمایش</button>
-            </span>
+        <h2>📊 تاریخچهٔ فاکتورها
+          <?php if ($stats['count'] > $stats['ok'] + $stats['failed']): ?>
+            <span class="pill wait">۱ در حال پردازش</span>
+          <?php endif; ?>
+        </h2>
+
+        <div class="stats">
+          <div class="stat"><b><?= h(fk_fa_num((int) $stats['count'])) ?></b><span>فاکتور</span></div>
+          <div class="stat"><b><?= h(fk_fa_num((int) $stats['ok'])) ?></b><span>موفق</span></div>
+          <div class="stat"><b><?= h(fk_fa_num((int) $stats['items'])) ?></b><span>قلم کالا</span></div>
+          <div class="stat"><b class="ltr" style="direction:ltr;text-align:right"><?= $stats['total'] > 0 ? h(fk_fmt_amount((int) $stats['total'])) : '—' ?></b><span>جمع کل مبالغ</span></div>
+        </div>
+
+        <form class="hsearch" method="get" action="">
+          <input type="text" name="q" value="<?= h($historyQuery) ?>"
+                 placeholder="جستجو در نام فایل، متن و شمارهٔ فاکتور…" autocomplete="off">
+          <button type="submit" class="ghost">جستجو</button>
+          <?php if ($historyQuery !== ''): ?>
+            <button type="button" class="ghost" onclick="location.href='?'">پاک کردن</button>
+          <?php endif; ?>
+        </form>
+
+        <?php if (!$recent): ?>
+          <p class="hempty">فاکتوری با این عبارت پیدا نشد.</p>
+        <?php else: ?>
+          <div class="hlist">
+            <?php foreach ($recent as $r): ?>
+              <div class="hitem">
+                <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
+                  <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در جریان')) ?>
+                </span>
+                <span class="hname ltr" title="<?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>">
+                  <?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>
+                </span>
+                <span class="hmeta">
+                  <?php if ($r['created_fa'] !== ''): ?><?= h($r['created_fa']) ?><?php endif; ?>
+                  <?php if ($r['items'] > 0): ?> · <?= h(fk_fa_num($r['items'])) ?> قلم<?php endif; ?>
+                  <?php if ($r['total'] > 0): ?> · <span class="ltr"><?= h(fk_fmt_amount($r['total'])) ?></span><?php endif; ?>
+                </span>
+                <span class="hact">
+                  <button class="ghost" type="button" data-job="<?= h($r['id']) ?>">نمایش</button>
+                  <?php if ($r['has_text']): ?>
+                    <a href="?api=txt&amp;id=<?= h(urlencode($r['id'])) ?>" target="_blank"
+                       rel="noopener"><button class="ghost" type="button">متن</button></a>
+                  <?php endif; ?>
+                  <form method="post" action="" style="display:inline"
+                        onsubmit="return confirm('این فاکتور از تاریخچه حذف شود؟');">
+                    <input type="hidden" name="action" value="forget_job">
+                    <input type="hidden" name="id" value="<?= h($r['id']) ?>">
+                    <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+                    <button class="ghost" type="submit" title="حذف">✕</button>
+                  </form>
+                </span>
+              </div>
+            <?php endforeach; ?>
           </div>
-        <?php endforeach; ?>
-        <p class="muted"><a href="?cleanup=1">پاک کردن کارهای قدیمی</a></p>
+        <?php endif; ?>
+
+        <div class="hint">
+          <?php if (count($allJobs) > 0): ?>
+            <a href="?csv=1">⬇️ دانلود همه به‌صورت CSV (برای اکسل)</a> ·
+          <?php endif; ?>
+          <a href="?cleanup=1">پاک کردن کارهای قدیمی</a>
+        </div>
       </div>
     <?php endif; ?>
 
