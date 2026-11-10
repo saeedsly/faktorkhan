@@ -305,6 +305,14 @@ def parse_invoice(raw_text: str, invoice_type: str | None = None) -> dict[str, A
     items = []
     try:
         from .ai_parser import extract_items_rules
+        # نگهبان بازگشت: ai_parser برای جمع‌بندی خودش parse_invoice را صدا
+        # می‌زند، و parse_invoice این‌جا دوباره موتور اقلام را صدا می‌زند.
+        # بدون این نگهبان، هر سندی که جمع کل داشته باشد حلقهٔ بی‌پایان
+        # می‌سازد و درخواست کاربر تا تایم‌اوت معلق می‌ماند (باگ واقعی که
+        # در اجرای زنده دیده شد: صفحه تا ابد «در حال پردازش»).
+        from .ai_parser import _PARSING_DEPTH
+        if _PARSING_DEPTH > 0:
+            raise RuntimeError("بازگشت تودرتو")
         understood = extract_items_rules(text)
         for raw_item in (understood.get("items") or []):
             desc = str(raw_item.get("description") or "").strip()

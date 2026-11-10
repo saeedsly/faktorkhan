@@ -20,6 +20,13 @@ from .parser import (
 
 log = logging.getLogger("faktorkhan.items")
 
+# نگهبان بازگشت:
+# extract_items_rules برای جمع‌بندی به parse_invoice تکیه می‌کند و
+# parse_invoice برای اقلام به extract_items_rules. بدون این شمارنده،
+# هر سند با جمع کل یک حلقهٔ بی‌پایان می‌سازد و درخواست تا تایم‌اوت
+# معلق می‌ماند. صفر = هیچ فراخوانی فعالی نیست.
+_PARSING_DEPTH = 0
+
 # نام‌های رایج ستون‌های فاکتور (برای تشخیص سرستون)
 QTY_WORDS = ("تعداد", "مقدار", "qty", "quantity", "count", "عدد")
 PRICE_WORDS = ("قیمت واحد", "قیمت", "مبلغ واحد", "unit price", "price", "rate")
@@ -267,6 +274,15 @@ def extract_items_rules(raw_text: str, invoice_type: str | None = None) -> dict[
     استخراج اقلام بدون هیچ سرویس بیرونی.
     برای فاکتور چاپی/حرارتی که ستون‌هایش با Tab یا فاصلهٔ زیاد جدا شده‌اند خوب کار می‌کند.
     """
+    global _PARSING_DEPTH
+    _PARSING_DEPTH += 1
+    try:
+        return _extract_items_rules_inner(raw_text, invoice_type)
+    finally:
+        _PARSING_DEPTH -= 1
+
+
+def _extract_items_rules_inner(raw_text: str, invoice_type: str | None = None) -> dict[str, Any]:
     text = normalize(raw_text or "")
     lines = [ln for ln in text.split("\n") if ln.strip()]
     items: list[dict[str, Any]] = []
@@ -356,6 +372,16 @@ def extract_items_rules(raw_text: str, invoice_type: str | None = None) -> dict[
         })
 
     totals = _reconcile_totals(items, text)
+
+    # قبل از جمع‌بندی نهایی، مبلغ سطرها را با جمع کل اعلام‌شده هم‌خوان کن.
+    # نکته: از totals استفاده می‌کنیم، نه parse_invoice — چون parse_invoice
+    # خودش این تابع را صدا می‌زند و فراخوانی دوباره، بازگشت بی‌پایان می‌سازد.
+    declared = int(totals.get("total") or 0)
+    if declared:
+        normalized = _normalize_line_amounts(items, declared)
+        if normalized is not items:
+            items = normalized
+            totals = _reconcile_totals(items, text)
     issues = _find_issues(items, totals)
     return {
         "items": items,
@@ -364,6 +390,50 @@ def extract_items_rules(raw_text: str, invoice_type: str | None = None) -> dict[
         "confidence": _score(items, totals, issues),
         "engine": "rules",
     }
+
+
+def _normalize_line_amounts(items: list[dict], declared_total: int) -> list[dict]:
+    """مبلغ سطر را برای فاکتورهای «تعداد — مبلغ واحد» اصلاح می‌کند.
+
+    مسئله: در فاکتور فارسی «کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰» عدد آخر
+    معمولاً **قیمت واحد** است نه جمع سطر. کاربر جمع کل را زیر فاکتور
+    می‌نویسد و انتظار دارد با ضرب بخواند.
+
+    روش: فرض می‌گیریم عدد آخر قیمت واحد است و جمع را qty×price می‌گیریم.
+    اگر جمع این فرض با جمع کل اعلام‌شدهٔ سند بخواند (اختلاف < ۱٪)، همین
+    را می‌پذیریم. وگرنه حالت «عدد آخر = جمع سطر» را نگه می‌داریم — که
+    برای فاکتورهایی که ستون «جمع» دارند درست است.
+
+    بدون این، جمع اقلام ۷۰۰,۰۰۰ درمی‌آمد در حالی که جمع کل فاکتور
+    ۳,۴۰۰,۰۰۰ بود؛ کاربر فکر می‌کرد برنامه «رقم‌ها را غلط خوانده».
+    """
+    if not items or not declared_total:
+        return items
+
+    as_unit_price = 0
+    for it in items:
+        qty = int(it.get("qty") or 1) or 1
+        amount = int(it.get("total") or 0)
+        as_unit_price += qty * amount
+    as_line_total = sum(int(it.get("total") or 0) for it in items)
+
+    def close_to(a: int, b: int) -> bool:
+        if not b:
+            return False
+        return abs(a - b) <= max(1, int(b * 0.01))
+
+    if close_to(as_unit_price, declared_total) and not close_to(as_line_total, declared_total):
+        fixed: list[dict] = []
+        for it in items:
+            qty = int(it.get("qty") or 1) or 1
+            amount = int(it.get("total") or 0)
+            fixed.append({
+                **it,
+                "unit_price": amount,
+                "total": qty * amount,
+            })
+        return fixed
+    return items
 
 
 def _reconcile_totals(items: list[dict], text: str) -> dict[str, int]:
