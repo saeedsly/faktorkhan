@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+تست سرتاسری مسیر سرویس ابری — با سرور جعلی که مثل سرویس واقعی رفتار می‌کند
+=========================================================================
+داستان این تست (باگ واقعی گزارش‌شده):
+
+    «سرویس ابری خروجی متنی برنگرداند.»
+
+سه علت داشت و هر سه در نسخهٔ فعلی برطرف شده‌اند. این تست هر سه را بازسازی
+می‌کند تا دیگر برنگردند:
+
+  ۱. سرویس لینک خروجی را با **کلید دارای فاصله** برمی‌گرداند:
+         { "Status": "Done", " FileToDownload ": "https://…/out.docx" }
+     تطبیق دقیق شکست می‌خورد، لینک پیدا نمی‌شد، خروجی خالی می‌ماند.
+
+  ۲. خروجی سرویس **docx** است (نه txt). کد قبلی فقط txt/json/csv/html را
+     می‌خواند؛ اگر docx می‌آمد متن خالی می‌ماند ولی کار «موفق» اعلام می‌شد —
+     بدترین حالت: کاربر فکر می‌کند متن نیست، در حالی که اعتبار کم شده.
+
+  ۳. `checkconvert` برای عکس «Data Not Found Yet» می‌گوید. کد قبلی این را
+     خطای مرگ‌آور می‌دانست و کار را می‌کشت.
+
+اجرا:
+    python backend/tests/cloud_e2e_test.py
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import zipfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+BACKEND = HERE.parent
+sys.path.insert(0, str(BACKEND))
+
+PASSED = 0
+FAILED = 0
+
+
+def check(label: str, ok: bool, detail: str = "") -> None:
+    global PASSED, FAILED
+    if ok:
+        PASSED += 1
+        print(f"  ✓ {label}")
+    else:
+        FAILED += 1
+        print(f"  ✗ {label}" + (f" — {detail}" if detail else ""))
+
+
+# ── فایل خروجی جعلی به شکل docx (همان چیزی که سرویس واقعی می‌دهد) ──
+def _make_docx() -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr(
+            "word/document.xml",
+            "<w:document><w:body>"
+            "<w:p><w:r><w:t>فاکتور فروش</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>شماره: ۱۴۰۴۰۹۱۵</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>کاغذ A4 — ۱۰ بسته — ۲۵۰,۰۰۰</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>جمع کل: ۲,۵۰۰,۰۰۰</w:t></w:r></w:p>"
+            "</w:body></w:document>",
+        )
+    return buffer.getvalue()
+
+
+DOCX = _make_docx()
+CALLS: dict[str, int] = {}
+
+
+class FakeService(BaseHTTPRequestHandler):
+    """سرویس جعلی با همان رفتارهای عجیبِ سرویس واقعی."""
+
+    def log_message(self, *args) -> None:  # ساکت
+        pass
+
+    def _send(self, payload: dict, code: int = 200) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length") or 0)
+        text = self.rfile.read(length).decode("utf-8", "ignore")
+        command = ""
+        for candidate in ("addfile", "checkconvert", "convert", "checkcredit", "deletefile"):
+            if candidate in text:
+                command = candidate
+                break
+        CALLS[command] = CALLS.get(command, 0) + 1
+
+        if command == "addfile":
+            self._send({"Status": "Done", "FileToken": "TOKEN-ABC-123",
+                        "PageCount": "1", "ConvertMethods": "4"})
+        elif command == "convert":
+            # علت ۱: کلید با فاصله در دو طرف
+            self._send({"Status": "Done", " FileToDownload ": f"http://127.0.0.1:{PORT}/out.docx"})
+        elif command == "checkconvert":
+            # علت ۳: «هنوز آماده نیست» — نباید کار را بکشد
+            self._send({"Status": "Data Not Found Yet"})
+        elif command == "checkcredit":
+            self._send({"Status": "Done", "OCRCredit": "1500", "AudioTranscribeCredit": "0"})
+        else:
+            self._send({"Status": "Done"})
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/out.docx"):
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            self.send_header("Content-Length", str(len(DOCX)))
+            self.end_headers()
+            self.wfile.write(DOCX)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+PORT = 8877
+DATA_DIR = Path(tempfile.gettempdir()) / "fk_cloud_e2e"
+os.environ.update(
+    DATA_DIR=str(DATA_DIR),
+    DATABASE_URL=f"sqlite:///{DATA_DIR}/test.db",
+    CLOUD_OCR_GATEWAY=f"http://127.0.0.1:{PORT}/gateway",
+    CLOUD_OCR_SEED_TOKEN="fake-token-for-test",
+    CLOUD_OCR_TIMEOUT="20",
+    SECRET_KEY="test-secret-key-1234567890abcdef",
+    ENCRYPTION_KEY="test-encryption-key-1234567890",
+)
+import shutil  # noqa: E402
+
+shutil.rmtree(DATA_DIR, ignore_errors=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+server = HTTPServer(("127.0.0.1", PORT), FakeService)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+time.sleep(0.3)
+
+from app.database import Base, engine, session_scope  # noqa: E402
+from app.models import OcrJob, User  # noqa: E402
+from app.services import cloud_ocr, jobs  # noqa: E402
+
+Base.metadata.create_all(bind=engine)
+
+print("═" * 58)
+print("آزمون سرویس ابری — بازسازی سه علت «خروجی متنی برنگشت»")
+print("═" * 58)
+
+print("\n[۱] خواندن کلید با فاصله و اشکال مختلف")
+for payload, label, expected in [
+    ({" FileToDownload ": "http://x/a"}, "کلید با فاصله", "http://x/a"),
+    ({"FileToDownload": "http://x/b"}, "کلید عادی", "http://x/b"),
+    ({"file_to_download": "http://x/c"}, "زیرخط", "http://x/c"),
+    ({"FileToDownloadURL": "http://x/d"}, "حروف بزرگ", "http://x/d"),
+    ({"Data": {" FileToDownload ": "http://x/e"}}, "تودرتو", "http://x/e"),
+    ({"Status": "Done"}, "بدون لینک", ""),
+]:
+    got = cloud_ocr.pick_key(payload, cloud_ocr.DOWNLOAD_KEYS)
+    check(label, got == expected, f"گرفت: {got!r}")
+
+print("\n[۲] اعتبار — مقدار نامعتبر نباید خطا بدهد")
+check("اعتبار درست خوانده می‌شود", cloud_ocr.check_credit()["ocr_credit"] == 1500)
+check("عدد خالی صفر می‌شود", cloud_ocr._as_int("") == 0)
+check("عدد متنی صفر می‌شود", cloud_ocr._as_int("abc") == 0)
+
+print("\n[۳] checkconvert که «Data Not Found Yet» می‌گوید")
+checked = cloud_ocr.check_convert("TOKEN-ABC-123")
+check("به NotReady تبدیل شد (نه خطای مرگ‌آور)", checked["status"] == "NotReady", str(checked))
+
+print("\n[۴] استخراج متن از قالب‌های مختلف خروجی")
+exports = DATA_DIR / "exports"
+exports.mkdir(parents=True, exist_ok=True)
+samples = {
+    "s.txt": ("فاکتور\nجمع ۵۰۰", "فاکتور"),
+    "s.json": (json.dumps({"Output": "فاکتور آزمون"}, ensure_ascii=False), "فاکتور آزمون"),
+    "s.docx": (None, "فاکتور فروش"),
+    "s.html": ("<p>فاکتور</p>", "فاکتور"),
+}
+for name, (content, needle) in samples.items():
+    path = exports / name
+    if content is None:
+        path.write_bytes(DOCX)
+    else:
+        path.write_text(content, encoding="utf-8")
+    text = jobs._text_from_file(path)
+    check(f"{name} → متن استخراج شد", needle in text, repr(text[:40]))
+
+corrupt = exports / "bad.docx"
+corrupt.write_bytes(b"notazip")
+check("فایل خراب، کار را نمی‌کشد", jobs._text_from_file(corrupt) == "")
+
+print("\n[۵] زنجیرهٔ کامل: addfile → convert → دانلود → متن")
+with session_scope() as db:
+    user = User(email="t@t.t", full_name="آزمون", password_hash="x", is_active=True)
+    db.add(user)
+    db.flush()
+    job = OcrJob(user_id=user.id, provider="cloud", method=4, output="txtrawjson",
+                 file_name="invoice.png", file_path="/tmp/x.png",
+                 status="queued", progress=0, meta={})
+    db.add(job)
+    db.flush()
+    job_id = job.id
+
+fetched = jobs._get(job_id)
+meta = dict(fetched.meta or {})
+meta["methods"] = [4]
+jobs._run_document(fetched, "TOKEN-ABC-123", meta)
+
+done = jobs._get(job_id)
+print(f"    وضعیت: {done.status} | پیشرفت: {done.progress}")
+print(f"    پیام : {done.message}")
+print(f"    منبع : {(done.meta or {}).get('text_source')}")
+check("کار موفق شد", done.status == "done", done.message)
+check("متن خالی نیست", bool((done.text or "").strip()))
+check("نام فاکتور در متن است", "فاکتور فروش" in (done.text or ""))
+check("مبلغ در متن است", "۲,۵۰۰,۰۰۰" in (done.text or ""))
+check("خطوط docx به هم نچسبیده‌اند", "فاکتور فروش\n" in (done.text or ""))
+check("منبع متن، فایل دانلودی است", (done.meta or {}).get("text_source") == "download")
+
+server.shutdown()
+
+print("\n" + "═" * 58)
+print(f"نتیجه: {PASSED} از {PASSED + FAILED} بررسی موفق")
+if FAILED == 0:
+    print("همه بررسی‌ها موفق بود ✓")
+else:
+    print(f"{FAILED} بررسی ناموفق ✗")
+print("═" * 58)
+sys.exit(0 if FAILED == 0 else 1)

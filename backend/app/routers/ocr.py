@@ -223,9 +223,15 @@ def download_result(job_id: int, user: User = Depends(get_current_user), db: Ses
     if not job or job.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "کار پردازش یافت نشد.")
     meta = job.meta or {}
-    path = Path(meta.get("result_file", ""))
-    if not meta.get("result_file") or not path.is_file():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "فایل خروجی موجود نیست.")
+    # هم مسیر ثبت‌شده در ستون مدل و هم مسیر داخل meta پذیرفته می‌شود؛
+    # نسخه‌های قبلی فقط meta را پر می‌کردند و کارهای قدیمی باید باز بمانند.
+    candidates = [job.result_path or "", meta.get("result_file") or ""]
+    path = next((Path(c) for c in candidates if c and Path(c).is_file()), None)
+    if path is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "فایل خروجی برای این کار ذخیره نشده است. متن استخراج‌شده در همان صفحه در دسترس است.",
+        )
     return FileResponse(path, filename=f"result-{job.id}{path.suffix}")
 
 

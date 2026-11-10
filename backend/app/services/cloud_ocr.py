@@ -168,6 +168,12 @@ def _call(payload: dict[str, Any], files: dict | None = None, timeout: int | Non
         raise CloudError("پاسخ سرویس ابری قابل تفسیر نیست.", "BadResponse")
 
     status = str(data.get("Status", "")).strip()
+    # «Data Not Found Yet» در مستندات جزو خطاها فهرست شده، ولی در عمل یعنی
+    # «هنوز آماده نیست». کشتن کار با این پیام، اعتبار کاربر را هدر می‌دهد.
+    if status.lower().replace(" ", "") in {"datanotfoundyet", "notready", "notfoundyet"}:
+        data["_status"] = status
+        data["_pending"] = True
+        return data
     if status in ERRORS:
         raise CloudError(ERRORS[status], status)
     if status.lower() in {"error", "failed"}:
@@ -219,16 +225,8 @@ def add_file_link(link: str) -> dict:
 
 
 def _find_key(data: dict, names: tuple[str, ...]) -> str:
-    """جست‌وجوی بازگشتی یک کلید در پاسخ (تحمل تفاوت حرف بزرگ/کوچک و ساختار تودرتو)."""
-    for name in names:
-        if name in data and data[name] not in (None, ""):
-            return str(data[name]).strip()
-    for value in data.values():
-        if isinstance(value, dict):
-            found = _find_key(value, names)
-            if found:
-                return found
-    return ""
+    """نگه‌داری سازگاری: همان pick_key با تحمل نویسه‌های اضافی."""
+    return pick_key(data, names)
 
 
 def _normalize_add(data: dict, suffix: str) -> dict:
@@ -242,6 +240,46 @@ def _normalize_add(data: dict, suffix: str) -> dict:
     }
 
 
+def _norm_key(text: str) -> str:
+    """کلید را برای تطبیق نرم نرمال می‌کند: فاصله/زیرخط/خط تیره/حروف بزرگ نادیده."""
+    return "".join(ch for ch in str(text).lower() if ch not in " \t\r\n_-")
+
+
+def pick_key(data: dict, candidates: tuple[str, ...]) -> str:
+    """خواندن یک کلید از پاسخ با تحمل نویسه‌های اضافی.
+
+    سرویس واقعی کلید لینک را با فاصله در دو طرف برمی‌گرداند:
+        { "Status": "Done", " FileToDownload ": "https://…/Output.docx" }
+    تطبیق دقیق شکست می‌خورد، لینک پیدا نمی‌شود، خروجی خالی می‌ماند و
+    اعتبار مصرف‌شده هدر می‌رود. این تابع همان کاری را می‌کند که نسخهٔ PHP
+    می‌کرد و کار می‌رفت.
+    """
+    if not isinstance(data, dict):
+        return ""
+    # ۱) تطبیق دقیق
+    for name in candidates:
+        value = data.get(name)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()
+    # ۲) تطبیق نرم روی کلیدهای همین سطح
+    wanted = {_norm_key(c) for c in candidates}
+    for key, value in data.items():
+        if not isinstance(value, (str, int, float)):
+            continue
+        if _norm_key(key) in wanted and str(value).strip():
+            return str(value).strip()
+    # ۳) جست‌وجوی بازگشتی در پاسخ‌های تودرتو
+    for value in data.values():
+        if isinstance(value, dict):
+            found = pick_key(value, candidates)
+            if found:
+                return found
+    return ""
+
+
+DOWNLOAD_KEYS = ("FileToDownload", "FileToDownloadUrl", "DownloadUrl", "OutputFile", "FileUrl")
+
+
 def convert(file_token: str, method: int = 4, output: str = "txtrawjson") -> dict:
     payload = {
         "command": "convert",
@@ -253,7 +291,8 @@ def convert(file_token: str, method: int = 4, output: str = "txtrawjson") -> dic
     data = _call(payload, timeout=settings.CLOUD_OCR_TIMEOUT)
     return {
         "status": str(data.get("Status", "")),
-        "download": str(data.get("FileToDownload") or data.get(" FileToDownload ") or "").strip(),
+        "download": pick_key(data, DOWNLOAD_KEYS),
+        "output": str(data.get("Output") or "").strip(),
         "raw": {k: v for k, v in data.items() if not k.startswith("_")},
     }
 
@@ -265,6 +304,9 @@ def convert_audio(file_token: str, language: str = "fa") -> dict:
 
 def check_convert(file_token: str) -> dict:
     data = _call({"command": "checkconvert", "filetoken": file_token})
+    # اگر کار در پاسخ «هنوز آماده نیست» علامت خورده، وضعیت را صریح برگردان
+    if data.get("_pending"):
+        return {"status": "NotReady", "progress": 0, "output": ""}
     progress_raw = str(data.get("Progress") or "0")
     digits = "".join(ch for ch in progress_raw if ch.isdigit() or ch == ".")
     try:
@@ -274,7 +316,7 @@ def check_convert(file_token: str) -> dict:
     return {
         "status": str(data.get("Status", "")),
         "progress": max(0, min(progress, 100)),
-        "output": str(data.get("Output") or ""),
+        "output": pick_key(data, ("Output", "Text", "Result")),
     }
 
 
@@ -288,11 +330,19 @@ def delete_file(file_token: str) -> dict:
     return {"status": str(data.get("Status", ""))}
 
 
+def _as_int(value: Any) -> int:
+    """تبدیل ایمن به عدد — مقدار خالی یا نامعتبر باید صفر شود، نه اینکه کار را بکشد."""
+    try:
+        return int(float(str(value or 0).strip() or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def check_credit() -> dict:
     data = _call({"command": "checkcredit"})
     return {
-        "ocr_credit": int(float(str(data.get("OCRCredit") or 0) or 0)),
-        "audio_credit": int(float(str(data.get("AudioTranscribeCredit") or 0) or 0)),
+        "ocr_credit": _as_int(pick_key(data, ("OCRCredit", "OcrCredit", "Credit"))),
+        "audio_credit": _as_int(pick_key(data, ("AudioTranscribeCredit", "AudioCredit"))),
         "status": str(data.get("Status", "")),
     }
 
