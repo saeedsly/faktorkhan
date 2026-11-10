@@ -227,12 +227,25 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
         method = min(allowed)
         meta["method_adjusted"] = method
     _update(job.id, status="converting", progress=40, message="تبدیل در حال انجام است…", method=method)
-    result = cloud_ocr.convert(file_token, method=method, output=job.output or "txtrawjson")
+    try:
+        result = cloud_ocr.convert(file_token, method=method, output=job.output or "txtrawjson")
+    except cloud_ocr.CloudError as exc:
+        # هر خطای سرویس باید کار را با پیام روشن ببندد، نه اینکه آن را
+        # در وضعیت «در حال تبدیل» رها کند (کاربر فکر می‌کند گیر کرده).
+        meta["convert_status"] = exc.code
+        meta["convert_error"] = exc.message
+        meta["remote"] = True
+        _update(job.id, status="failed", progress=0, message=exc.message, meta=meta,
+                result_path="")
+        return
     meta["convert_status"] = result.get("status", "")
 
     text = ""
     download_url = result.get("download") or ""
-    saved = Path("")
+    # عمداً None است، نه Path(""): Path("") به پوشهٔ جاری اشاره می‌کند و
+    # exists() آن True می‌شود — نتیجه یک پیام دروغ «فایل ذخیره شد» بود
+    # در حالی که هیچ فایلی ذخیره نشده بود.
+    saved: Path | None = None
 
     # ── ۱) لینک خروجی: بی‌درنگ دانلود شود (طبق قرارداد سرویس برای عکس/PDF)
     if download_url:
@@ -312,9 +325,13 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
         if meta.get("check_status"):
             detail.append(f"وضعیت سرویس: {meta['check_status']}")
         message = "سرویس ابری خروجی متنی برنگرداند — " + " · ".join(detail) + "."
-        kept = saved and saved.exists() and saved.stat().st_size > 0
+        kept = bool(saved is not None and saved.is_file() and saved.stat().st_size > 0)
         if kept:
             message += " فایل خروجی ذخیره شد؛ از پنل دانلودش کنید."
+        elif meta.get("convert_status", "").lower().startswith(("invalid", "badrequest")):
+            # درخواست از پایه رد شده — کیفیت عکس ربطی ندارد، گفتنش گمراه‌کننده است
+            message += (" این خطا از درخواست است، نه از عکس — کمی بعد دوباره تلاش کنید؛ "
+                        "اگر تکرار شد به پشتیبانی بگویید.")
         else:
             message += (" فایل را دوباره بفرستید؛ اگر تکرار شد، کیفیت عکس را بالا ببرید "
                         "(نور یکدست، بدون کج‌شدگی) یا از موتور هوش مصنوعی استفاده کنید.")
@@ -329,7 +346,7 @@ def _run_document(job: OcrJob, file_token: str, meta: dict) -> None:
         text=text[:400000],
         message=f"تبدیل انجام شد — {len(text):,} نویسه استخراج شد.",
         meta=meta,
-        result_path=str(saved) if (saved and saved.exists()) else "",
+        result_path=str(saved) if (saved is not None and saved.is_file()) else "",
     )
 
 

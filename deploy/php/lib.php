@@ -508,11 +508,30 @@ function call_gateway(array $fields, ?string $filePath = null, ?string $fileMime
         'UnkwonURL' => 'لینک ارسالی معتبر نیست.',
         'UnknowURL' => 'لینک ارسالی معتبر نیست.',
         'UnknowMethod' => 'روش تبدیل نامعتبر است.',
+        /* سرویس با این وضعیت می‌گوید «پارامتری را قبول نکردم» — پیام خودش
+           (مثلاً «method is required») باید به کاربر برسد، وگرنه عیب‌یابی
+           غیرممکن است. */
+        'InvalidParams' => 'سرویس ابری پارامترهای درخواست را نپذیرفت.',
+        'InvalidParameter' => 'سرویس ابری پارامترهای درخواست را نپذیرفت.',
+        'BadRequest' => 'درخواست به سرویس ابری ناقص بود.',
         '404' => 'اطلاعات ارسالی سرویس ابری درست نبود (کد ۴۰۴).',
         '500' => 'خطای داخلی سرویس ابری (کد ۵۰۰) — گاهی با تلاش دوباره حل می‌شود.',
     );
     if (isset($errors[$st])) {
-        return array('ok' => false, 'data' => $data, 'message' => $errors[$st], 'code' => $st);
+        $msg = $errors[$st];
+        $serviceMsg = trim((string) ($data['Message'] ?? $data['message'] ?? $data['Error'] ?? ''));
+        if ($serviceMsg !== '') {
+            $msg .= ' (پاسخ سرویس: ' . scrub($serviceMsg, $token) . ')';
+        }
+        if (stripos($st, 'invalid') === 0 || strcasecmp($st, 'BadRequest') === 0) {
+            /* بگو چه پارامترهایی فرستاده شد تا بشود فهمید کدام را نمی‌پذیرد */
+            $sent = array();
+            foreach (array_keys($fields) as $k) {
+                $sent[] = $k;
+            }
+            $msg .= ' — پارامترهای ارسالی: ' . implode(', ', $sent);
+        }
+        return array('ok' => false, 'data' => $data, 'message' => $msg, 'code' => $st);
     }
     /*
      * «Data Not Found Yet» در مستندات جزو خطاها فهرست شده، ولی در عمل یعنی
@@ -1546,13 +1565,48 @@ function job_tick(array $job, int $budget = 25): array
         $job['progress'] = 25;
         job_save($job);
 
-        $payload = array('command' => 'convert', 'filetoken' => $fileToken,
-                         'method' => (string) ((int) ($job['method'] ?? 4)));
+        /*
+         * «تلاش دوبارهٔ هوشمند» در برابر InvalidParams
+         * -----------------------------------------------
+         * سرویس ممکن است comboِ method+output را نپذیرد (مثلاً روش Word با
+         * خروجی JSON). به‌جای شکست فوری، هر بار یک پارامتر «ریسک‌دار» کمتر
+         * می‌فرستیم. اعتبار OCR مصرف نمی‌شود، چون درخواست از پایه رد شده.
+         */
+        $methodInt = (int) ($job['method'] ?? 4);
         $output = (string) ($job['output'] ?? '');
-        if ($output !== '') {
-            $payload['output'] = $output;
+        $attempts = array();
+        $conv = array('ok' => false, 'data' => array(), 'message' => '', 'code' => '');
+        $steps = array(
+            'full' => array('method' => true, 'output' => true),
+            'no_output' => array('method' => true, 'output' => false),
+            'method4_no_output' => array('method' => false, 'output' => false),
+        );
+        foreach ($steps as $stepName => $opt) {
+            $payload = array('command' => 'convert', 'filetoken' => $fileToken);
+            $payload['method'] = (string) ($opt['method'] ? $methodInt : 4);
+            if ($opt['output'] && $output !== '') {
+                $payload['output'] = $output;
+            }
+            $conv = call_gateway($payload, null, null, '', 45);
+            if ($conv['ok']) {
+                break;
+            }
+            $attempts[] = $stepName . '→' . $conv['code'];
+            $isParamErr = stripos((string) $conv['code'], 'invalid') === 0
+                || strcasecmp((string) $conv['code'], 'BadRequest') === 0
+                || strcasecmp((string) $conv['code'], 'UnknowMethod') === 0
+                || strcasecmp((string) $conv['code'], 'MethodNotAllowed') === 0;
+            if (!$isParamErr) {
+                break;   /* خطای اعتبار/شبکه با تلاش دوباره حل نمی‌شود */
+            }
         }
-        $conv = call_gateway($payload, null, null, '', 45);
+        if ($attempts) {
+            $job['convert_attempts'] = $attempts;
+        }
+        if (!$conv['ok'] && $attempts && count($attempts) === count($steps)) {
+            $conv['message'] .= ' — هر سه حالت ارسال امتحان شد و هیچ‌کدام پذیرفته نشد؛'
+                . ' مشکل از نسخهٔ برنامه یا تغییر سرویس است.';
+        }
 
         if (!$conv['ok']) {
             if (in_array($conv['code'], array('Network', 'BadResponse'), true) && $age < 900) {

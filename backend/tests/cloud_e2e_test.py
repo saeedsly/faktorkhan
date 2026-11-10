@@ -72,6 +72,7 @@ def _make_docx() -> bytes:
 
 DOCX = _make_docx()
 CALLS: dict[str, int] = {}
+MODE: dict[str, object] = {"invalid": False}
 
 
 class FakeService(BaseHTTPRequestHandler):
@@ -102,7 +103,21 @@ class FakeService(BaseHTTPRequestHandler):
             self._send({"Status": "Done", "FileToken": "TOKEN-ABC-123",
                         "PageCount": "1", "ConvertMethods": "4"})
         elif command == "convert":
-            # علت ۱: کلید با فاصله در دو طرف
+            if MODE.get("invalid") == "always":
+                self._send({"Status": "InvalidParams", "Message": "method is required"})
+                return
+            if MODE.get("invalid") == "output":
+                # سرویس output را با این روش نمی‌پذیرد — پایهٔ باگ واقعی
+                if "output=" in text or "output" in text:
+                    CALLS["rejected_output"] = CALLS.get("rejected_output", 0) + 1
+                    self._send({"Status": "InvalidParams", "Message": "output is not valid for this method"})
+                    return
+            if MODE.get("invalid") == "method1":
+                if "method=1" in text:
+                    CALLS["rejected_method1"] = CALLS.get("rejected_method1", 0) + 1
+                    self._send({"Status": "InvalidParams", "Message": "method 1 not allowed"})
+                    return
+            # حالت عادی: کلید با فاصله در دو طرف
             self._send({"Status": "Done", " FileToDownload ": f"http://127.0.0.1:{PORT}/out.docx"})
         elif command == "checkconvert":
             # علت ۳: «هنوز آماده نیست» — نباید کار را بکشد
@@ -226,6 +241,93 @@ check("مبلغ در متن است", "۲,۵۰۰,۰۰۰" in (done.text or ""))
 check("خطوط docx به هم نچسبیده‌اند", "فاکتور فروش\n" in (done.text or ""))
 check("منبع متن، فایل دانلودی است", (done.meta or {}).get("text_source") == "download")
 
+print("\n[۶] سرویس InvalidParams می‌دهد — برنامه باید خودش نجات پیدا کند")
+
+# ── ۶الف: output مشکل دارد. تلاش دوباره بدون output باید موفق شود.
+MODE["invalid"] = "output"
+CALLS.clear()
+res6 = cloud_ocr.convert("TOKEN-X", method=4, output="txtrawjson")
+print(f"    لینک: {res6['download']}")
+print(f"    تلاش‌ها: {[a['step'] + '→' + a['code'] for a in res6.get('attempts', [])]}")
+check("output رد شد ولی convert در نهایت موفق شد", bool(res6["download"]), str(res6))
+check("سرویس واقعاً output را رد کرده بود", CALLS.get("rejected_output", 0) >= 1, str(CALLS))
+check("تلاش دوباره ثبت شده", len(res6.get("attempts") or []) >= 1)
+
+# ── ۶ب: method=1 مجاز نیست. تلاش دوباره با روش ۴ باید موفق شود.
+MODE["invalid"] = "method1"
+CALLS.clear()
+res6b = cloud_ocr.convert("TOKEN-Y", method=1, output="txtrawjson")
+print(f"    لینک: {res6b['download']}")
+check("روش ۱ رد شد ولی روش ۴ جواب داد", bool(res6b["download"]), str(res6b))
+check("سرویس واقعاً روش ۱ را رد کرده بود", CALLS.get("rejected_method1", 0) >= 1, str(CALLS))
+
+# ── ۶ج: همهٔ حالت‌ها رد می‌شوند → باید خطای گویا بدهد، نه گیر کند.
+MODE["invalid"] = "always"
+CALLS.clear()
+try:
+    cloud_ocr.convert("TOKEN-Z", method=4, output="txtrawjson")
+    check("همهٔ حالت‌ها رد شد → باید خطا بدهد", False, "بدون خطا برگشت")
+except cloud_ocr.CloudError as exc:
+    print(f"    خطا: {exc.message[:110]}")
+    check("پیام خطا گویاست", "پارامترهای درخواست را نپذیرفت" in exc.message, exc.message[:80])
+    check("گفته شد هر سه حالت امتحان شد", "هر سه حالت" in exc.message, exc.message[:120])
+    check("تعداد تلاش‌ها ذکر شده", "تلاش" in exc.message)
+
+# ── ۶د: کل زنجیره با InvalidParams — کار باید بسته شود، نه رها
+MODE["invalid"] = "output"     # با نجات حل می‌شود
+with session_scope() as db:
+    user2 = User(email="t2@t.t", full_name="آزمون۲", password_hash="x", is_active=True)
+    db.add(user2)
+    db.flush()
+    job2 = OcrJob(user_id=user2.id, provider="cloud", method=4, output="txtrawjson",
+                  file_name="invoice2.png", file_path="/tmp/y.png",
+                  status="queued", progress=0, meta={})
+    db.add(job2)
+    db.flush()
+    job2_id = job2.id
+
+fetched2 = jobs._get(job2_id)
+meta2 = dict(fetched2.meta or {})
+meta2["methods"] = [4]
+jobs._run_document(fetched2, "TOKEN-RESCUE", meta2)
+done2 = jobs._get(job2_id)
+print(f"    وضعیت: {done2.status} | نویسه: {len(done2.text or '')}")
+check("با output ردشده، کار باز هم متن آورد", done2.status == "done", done2.status + " " + (done2.message or ""))
+check("متن واقعاً استخراج شد", "فاکتور فروش" in (done2.text or ""))
+
+# ── ۶ه: شکست کامل — پیام باید صادق باشد
+MODE["invalid"] = "always"
+with session_scope() as db:
+    user3 = User(email="t3@t.t", full_name="آزمون۳", password_hash="x", is_active=True)
+    db.add(user3)
+    db.flush()
+    job3 = OcrJob(user_id=user3.id, provider="cloud", method=4, output="txtrawjson",
+                  file_name="invoice3.png", file_path="/tmp/z.png",
+                  status="queued", progress=0, meta={})
+    db.add(job3)
+    db.flush()
+    job3_id = job3.id
+
+fetched3 = jobs._get(job3_id)
+meta3 = dict(fetched3.meta or {})
+meta3["methods"] = [4]
+jobs._run_document(fetched3, "TOKEN-FAIL", meta3)
+done3 = jobs._get(job3_id)
+msg = done3.message or ""
+print(f"    وضعیت: {done3.status}")
+print(f"    پیام : {msg[:120]}")
+check("کار بسته شد (گیر نکرد)", done3.status == "failed", done3.status)
+check("پیام دروغ «فایل ذخیره شد» نیست", "ذخیره شد" not in msg, msg)
+check("result_path خالی است", not (done3.result_path or ""), done3.result_path or "")
+check("راهنمای بی‌ربط «کیفیت عکس» نرفته", "کیفیت عکس" not in msg, msg)
+
+print("\n[۷] Path(\"\") هرگز به‌عنوان فایل ذخیره‌شده تلقی نشود")
+from pathlib import Path as _Path
+fake = _Path("")
+check("Path('') وجود دارد (تله)", fake.exists())
+check("is_file() آن False است", not fake.is_file())
+
+MODE["invalid"] = False
 server.shutdown()
 
 print("\n" + "═" * 58)

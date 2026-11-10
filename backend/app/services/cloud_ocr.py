@@ -64,6 +64,12 @@ ERRORS: dict[str, str] = {
     "Data Not Found Yet": "خروجی آماده نشده است؛ کمی بعد دوباره بررسی کنید.",
     "IPError": "آی‌پی سرور مجاز به استفاده از سرویس ابری نیست.",
     "NotEnoughCredit": "اعتبار سرویس ابری کافی نیست.",
+    # سرویس با این وضعیت می‌گوید «پارامتری از درخواست را قبول نکردم».
+    # نسخهٔ قبلی این را نمی‌شناخت، پس پیام واقعی سرویس دور ریخته می‌شد و
+    # کاربر یک جملهٔ مبهم («لینک خروجی نداد») می‌دید.
+    "InvalidParams": "سرویس ابری پارامترهای درخواست را نپذیرفت.",
+    "InvalidParameter": "سرویس ابری پارامترهای درخواست را نپذیرفت.",
+    "BadRequest": "درخواست به سرویس ابری ناقص یا نامعتبر بود.",
 }
 
 
@@ -175,7 +181,17 @@ def _call(payload: dict[str, Any], files: dict | None = None, timeout: int | Non
         data["_pending"] = True
         return data
     if status in ERRORS:
-        raise CloudError(ERRORS[status], status)
+        # پیام خودِ سرویس را هم اضافه کن (مثلاً «method is required») —
+        # بدون آن، کاربر و پشتیبان هر دو در تاریکی می‌مانند.
+        service_msg = _scrub(str(data.get("Message") or data.get("message") or data.get("Error") or ""), token)
+        message = ERRORS[status]
+        if service_msg and service_msg.lower() not in message:
+            message = f"{message} (پاسخ سرویس: {service_msg})"
+        # برای InvalidParams بگو کدام پارامترها فرستاده شد تا عیب‌یابی ممکن باشد
+        if status.lower().startswith("invalid") or status.lower() == "badrequest":
+            sent = ", ".join(sorted(k for k in payload if k != "token"))
+            message += f" — پارامترهای ارسالی: {sent}"
+        raise CloudError(message, status)
     if status.lower() in {"error", "failed"}:
         raise CloudError(_scrub(str(data.get("Message") or raw), token), status or "Error")
     data["_status"] = status
@@ -280,21 +296,65 @@ def pick_key(data: dict, candidates: tuple[str, ...]) -> str:
 DOWNLOAD_KEYS = ("FileToDownload", "FileToDownloadUrl", "DownloadUrl", "OutputFile", "FileUrl")
 
 
+# ترتیب تلاش دوباره وقتی سرویس «InvalidParams» می‌دهد.
+# منطق: هر بار یک پارامتر «ریسک‌دار» کمتر می‌فرستیم. اول با همه‌چیز، بعد
+# بدون output (چون به روش وابسته است)، بعد با روش ۴ که برای همهٔ انواع
+# فایل مجاز است. اگر هیچ‌کدام جواب نداد، خطای اصلی گزارش می‌شود.
+_FALLBACK_STEPS = ("full", "no_output", "method4_no_output")
+
+
 def convert(file_token: str, method: int = 4, output: str = "txtrawjson") -> dict:
-    payload = {
-        "command": "convert",
-        "filetoken": file_token,
-        "method": method,
-    }
-    if output:
-        payload["output"] = output
-    data = _call(payload, timeout=settings.CLOUD_OCR_TIMEOUT)
-    return {
-        "status": str(data.get("Status", "")),
-        "download": pick_key(data, DOWNLOAD_KEYS),
-        "output": str(data.get("Output") or "").strip(),
-        "raw": {k: v for k, v in data.items() if not k.startswith("_")},
-    }
+    """تبدیل با «تلاش دوبارهٔ هوشمند».
+
+    اگر سرویس InvalidParams بدهد، به‌جای شکست فوری، با پارامترهای
+    محافظه‌کارانه‌تر دوباره تلاش می‌کنیم. تجربهٔ کاربر: به‌جای «خطا»،
+    کار ادامه پیدا می‌کند — که هدف اصلی «هرگز گیر نکردن» است.
+
+    اعتبار: هر تلاش دوباره فقط وقتی انجام می‌شود که سرویس درخواست را
+    از پایه رد کرده باشد (یعنی تبدیل شروع نشده و اعتبار OCR مصرف نشده).
+    """
+    last_error: CloudError | None = None
+    attempts: list[dict] = []
+
+    for step in _FALLBACK_STEPS:
+        payload: dict = {"command": "convert", "filetoken": file_token}
+        if step == "full":
+            payload["method"] = method
+            if output:
+                payload["output"] = output
+        elif step == "no_output":
+            payload["method"] = method
+        else:                                   # method4_no_output
+            payload["method"] = 4
+
+        try:
+            data = _call(payload, timeout=settings.CLOUD_OCR_TIMEOUT)
+        except CloudError as exc:
+            attempts.append({"step": step, "code": exc.code, "message": exc.message})
+            if exc.code.lower().startswith(("invalid", "badrequest")):
+                last_error = exc
+                continue                        # این پارامتر مشکل داشت، بعدی
+            # خطای دیگر (اعتبار/شبکه/فایل) با تلاش دوباره حل نمی‌شود
+            exc.attempts = attempts             # type: ignore[attr-defined]
+            raise
+
+        return {
+            "status": str(data.get("Status", "")),
+            "download": pick_key(data, DOWNLOAD_KEYS),
+            "output": str(data.get("Output") or "").strip(),
+            "attempts": attempts,
+            "raw": {k: v for k, v in data.items() if not k.startswith("_")},
+        }
+
+    # همهٔ حالت‌ها رد شدند
+    assert last_error is not None
+    last_error.attempts = attempts             # type: ignore[attr-defined]
+    last_error.message = (
+        f"{last_error.message} — هر سه حالت ارسال امتحان شد "
+        f"({len(attempts)} تلاش) و هیچ‌کدام پذیرفته نشد. "
+        "یعنی مشکل از نسخهٔ برنامه یا تغییر سرویس است؛ به پشتیبانی بگویید."
+    )
+    raise last_error
 
 
 def convert_audio(file_token: str, language: str = "fa") -> dict:
