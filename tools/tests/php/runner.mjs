@@ -13,6 +13,8 @@ const lib = patch(fs.readFileSync(`${SRC}/lib.php`, "utf8"));
 const idx = patch(fs.readFileSync(`${SRC}/index.php`, "utf8"));
 const eng = fs.readFileSync(`${SRC}/engine.php`, "utf8").replace(/\?>`$/, "");
 
+const library = fs.readFileSync(`${SRC}/library.php`, "utf8");
+
 const STUBS = `<?php
 if (!class_exists('FkExit')) { class FkExit extends Exception {} }
 $names = array('URL','POST','POSTFIELDS','RETURNTRANSFER','TIMEOUT','CONNECTTIMEOUT','SSL_VERIFYPEER',
@@ -78,6 +80,7 @@ ini_set('display_errors','0'); error_reporting(E_ALL & ~E_DEPRECATED);
 file_put_contents('/tmp/fk/lib.php', base64_decode('${B(lib)}'));
 file_put_contents('/tmp/fk/index.php', base64_decode('${B(idx)}'));
 file_put_contents('/tmp/fk/engine.php', base64_decode('${B(eng)}'));
+file_put_contents('/tmp/fk/library.php', base64_decode('${B(library)}'));
 file_put_contents('/tmp/fk/stubs.php', base64_decode('${B(STUBS)}'));
 ${seed}
 @unlink('/tmp/calls.log');
@@ -97,7 +100,7 @@ $body = ob_get_clean();
 $files = array();
 foreach (array('/tmp/fk/fk-sessions','/tmp/fk/fk-jobs','/tmp/fk/fk-uploads','/tmp/fk') as $d) {
   foreach (glob($d . '/*') ?: array() as $f) {
-    if (is_file($f) && !in_array(basename($f), array('lib.php','index.php','stubs.php'), true)) {
+    if (is_file($f) && !in_array(basename($f), array('lib.php','index.php','stubs.php','library.php','engine.php'), true)) {
       $files[substr($f, 8)] = base64_encode((string) file_get_contents($f));
     }
   }

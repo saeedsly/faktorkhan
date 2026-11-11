@@ -143,11 +143,26 @@ function start_session(): void
     if (!is_dir($savePath)) {
         @mkdir($savePath, 0700, true);
     }
+    /*
+     * نکته‌ای که یک بار نشست را کامل از کار انداخت:
+     *   session_save_path($path) در صورت موفقیت رشتهٔ خالی برمی‌گرداند،
+     *   نه مسیر جدید. نسخهٔ قبلی نتیجهٔ همین تابع را دوباره
+     *   session_save_path() می‌خواند و چون '' بود، نتیجه می‌گرفت مسیر
+     *   عوض نشده و به پوشهٔ موقت سیستم سقوط می‌کرد؛ آن‌جا هم مرورگر
+     *   کوکی نمی‌فرستاد و «تنظیم گذرواژه» بی‌اثر می‌شد.
+     *
+     * حالا مقدار بازگشتی را نادیده می‌گیریم و خودِ مسیر را می‌سنجیم.
+     */
+    $configured = false;
     if (is_dir($savePath) && is_writable($savePath)) {
         @session_save_path($savePath);
+        $configured = (@session_save_path() === $savePath);
     }
-    if (@session_save_path() === '' || !@is_writable(@session_save_path())) {
-        @session_save_path(sys_get_temp_dir());
+    if (!$configured) {
+        $tmp = sys_get_temp_dir();
+        if ($tmp !== '' && @is_writable($tmp)) {
+            @session_save_path($tmp);
+        }
     }
     $cookieOk = false;
     if (PHP_VERSION_ID >= 70300) {
@@ -1290,6 +1305,7 @@ function job_create(array $data): array
         'out_kind' => '',
         'docx_rebuilt' => false,
         'engine' => 'cloud',
+        'invoice_type' => 'printed',
         'ai_tried' => false,
         'error' => '',
     ), $data);
@@ -2280,7 +2296,12 @@ function job_finish_text(array $job, string $text): array
         /* موتور متن را می‌فهمد: نویسه‌ها یکدست، اقلام استخراج و اعداد بازبینی می‌شوند */
         if (function_exists('fk_understand')) {
             try {
-                $u = fk_understand($text);
+                /* نوع فاکتور (چاپی/حرارتی/دست‌نویس/صوتی/خودکار) به موتور
+                   فهم داده می‌شود: انتخاب کاربر واقعاً خط لولهٔ خوانش را
+                   عوض می‌کند، نه اینکه فقط یک برچسب باشد. */
+                $u = fk_understand($text, array(
+                    'invoice_type' => (string) ($job['invoice_type'] ?? 'printed'),
+                ));
                 $meta = fk_detect_meta($u['text'], $u['totals']);
                 $quality = fk_quality_report($u['text'], $u);
                 $job['understood'] = array(
@@ -2292,6 +2313,10 @@ function job_finish_text(array $job, string $text): array
                     'meta' => $meta,
                     'quality' => $quality,
                     'cleaned' => fk_canonical_numbers($u['text']),
+                    'invoice_type' => $u['invoice_type'] ?? ((string) ($job['invoice_type'] ?? 'printed')),
+                    'type_label' => $u['type_label'] ?? '',
+                    'type_source' => $u['type_source'] ?? 'manual',
+                    'detection' => $u['detection'] ?? null,
                 );
                 /* متن یکدست‌شده جای متن خام را می‌گیرد: خوانا و آمادهٔ کپی */
                 $job['text_clean'] = $u['text'];

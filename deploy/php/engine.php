@@ -473,6 +473,147 @@ if (!function_exists('fk_split_columns')) {
     }
 }
 
+if (!function_exists('fk_detect_invoice_type')) {
+
+    /* ═══════════════ ۳.۵ تشخیص نوع فاکتور ═══════════════
+
+       «تشخیص خودکار» تا امروز فقط یک برچسب در رابط بود: هر چه کاربر
+       انتخاب می‌کرد، موتور همان خط لولهٔ چاپی را اجرا می‌کرد. این بخش
+       انتخاب را واقعی می‌کند — برای هر نوع، پارامترهای خوانش عوض می‌شوند:
+
+         چاپی      جدول ستون‌دار، سرستون دارد
+         حرارتی    فیش بلند و باریک؛ سطرها کوتاه‌اند، سرستون ندارد
+         دست‌نویس  OCR خطا دارد؛ فاصله‌ها نامنظم، ارقام شکسته
+         صوتی      متن گفتاری است، نه جدول؛ بدون سرستون و ستون
+         خودکار    از روی نشانه‌های متن خودش تشخیص می‌دهد
+    */
+
+    /**
+     * تشخیص نوع فاکتور از متن.
+     *
+     * نشانه‌ها به ترتیب قدرت: کلیدواژه‌های فیش/کارتخوان، طول متن و
+     * چگالی سطرها برای حرارتی، نشانه‌های دست‌نویس/اسکن، و در نهایت
+     * وجود سرستون برای چاپی.
+     *
+     * @return array{type:string, confidence:int, reason:string}
+     */
+    function fk_detect_invoice_type(string $text): array
+    {
+        $low = fk_lower($text);
+        $len = fk_len(trim($text));
+        $lines = preg_split('/\r\n|\r|\n/', trim($text)) ?: array();
+        $lines = array_values(array_filter(array_map('trim', $lines), 'strlen'));
+        $n = count($lines);
+        $avgLen = 0;
+        foreach ($lines as $ln) $avgLen += fk_len($ln);
+        $avgLen = $n > 0 ? (int) round($avgLen / $n) : 0;
+
+        /* ۱) صوتی: نشانه‌های گفتار یا پسوند صوتی در متن */
+        if (preg_match('/(فایل صوتی|ویس|ضبط شده|گفتاری|transcri|صداگذاری)/u', $low)) {
+            return array('type' => 'audio', 'confidence' => 78, 'reason' => 'نشانهٔ متن گفتاری/صوتی');
+        }
+
+        /* ۲) حرارتی: فیش صندوق، کارتخوان، رسید */
+        $thermalHits = 0;
+        foreach (array('کارتخوان', 'فیش', 'رسید', 'تراکنش', 'pos', 'شماره پیگیری',
+                       'شماره مرجع', 'پایانه', 'خرید موفق', 'موجودی') as $w) {
+            if (fk_pos($low, $w) !== false) $thermalHits++;
+        }
+        if ($thermalHits >= 1 && $n >= 4 && $avgLen <= 46) {
+            return array('type' => 'thermal', 'confidence' => min(95, 62 + $thermalHits * 8),
+                'reason' => 'نشانهٔ فیش صندوق/کارتخوان (سطرهای کوتاه: ' . $avgLen . ' نویسه)');
+        }
+        if ($thermalHits >= 2) {
+            return array('type' => 'thermal', 'confidence' => 60 + $thermalHits * 5,
+                'reason' => 'چند نشانهٔ فیش/رسید');
+        }
+
+        /* ۳) دست‌نویس: متن کوتاه، بدون سرستون، پر از نویز و رقم‌های تک‌رقمی */
+        $header = fk_header_map(array_map('fk_split_columns', $lines));
+        $hasHeader = !empty($header['map']);
+        if (!$hasHeader && $n > 0) {
+            $noise = preg_match_all('/([^\p{L}\p{N}\s,٬.]{1,2}\s){2,}/u', $text) ?: 0;
+            $single = preg_match_all('/(?<![\d])[\d](?![\d])/u', fk_digits_latin($text)) ?: 0;
+            $density = max(1, $n);
+            if ($noise / $density > 0.5 || $single / max(1, $len) > 0.06) {
+                return array('type' => 'handwritten', 'confidence' => 58,
+                    'reason' => 'نویز زیاد و نبود جدول ← احتمال دست‌نویس');
+            }
+        }
+
+        if ($hasHeader) {
+            return array('type' => 'printed', 'confidence' => 84,
+                'reason' => 'سرستون جدول شناسایی شد');
+        }
+        return array('type' => 'printed', 'confidence' => 55,
+            'reason' => 'پیش‌فرض: فاکتور چاپی');
+    }
+
+    /**
+     * پارامترهای خوانش هر نوع فاکتور.
+     *
+     * همین آرایه تفاوت واقعی می‌سازد: برای حرارتی خطوط بلند را نمی‌شکنیم
+     * (فیش خودش باریک است)، برای دست‌نویس بازسازی سطرها را فعال می‌کنیم،
+     * و برای صوتی ستون‌سازی را خاموش می‌کنیم.
+     */
+    function fk_type_options(string $type): array
+    {
+        switch ($type) {
+            case 'thermal':
+                return array(
+                    'type' => 'thermal',
+                    'label' => 'حرارتی',
+                    'break_lines' => false,   /* فیش باریک است؛ شکستن سطر لازم نیست */
+                    'join_wrapped' => false,  /* هر سطر فیش مستقل است */
+                    'merge_columns' => false,
+                    'autofix' => true,
+                    'max_line' => 0,
+                );
+            case 'handwritten':
+                return array(
+                    'type' => 'handwritten',
+                    'label' => 'دست‌نویس',
+                    'break_lines' => true,
+                    'join_wrapped' => true,   /* سطرهای شکستهٔ دست‌نویس باید به‌هم بچسبند */
+                    'merge_columns' => false,
+                    'autofix' => true,
+                    'max_line' => 140,
+                );
+            case 'audio':
+                return array(
+                    'type' => 'audio',
+                    'label' => 'صوتی',
+                    'break_lines' => false,
+                    'join_wrapped' => false,
+                    'merge_columns' => true,  /* گفتار ستون ندارد؛ ستون‌ها یکی می‌شوند */
+                    'autofix' => false,
+                    'max_line' => 0,
+                );
+            case 'auto':
+            case '':
+                return array(
+                    'type' => 'auto',
+                    'label' => 'تشخیص خودکار',
+                    'break_lines' => true,
+                    'join_wrapped' => true,
+                    'merge_columns' => false,
+                    'autofix' => true,
+                    'max_line' => 140,
+                );
+            default:  /* printed */
+                return array(
+                    'type' => 'printed',
+                    'label' => 'چاپی',
+                    'break_lines' => true,
+                    'join_wrapped' => true,
+                    'merge_columns' => false,
+                    'autofix' => true,
+                    'max_line' => 140,
+                );
+        }
+    }
+}
+
 if (!function_exists('fk_understand')) {
 
     /* ═══════════════ ۴. خط لولهٔ فهم فاکتور ═══════════════ */
@@ -488,9 +629,39 @@ if (!function_exists('fk_understand')) {
      */
     function fk_understand(string $rawText, array $opts = array()): array
     {
-        $autofix = array_key_exists('autofix', $opts) ? (bool) $opts['autofix'] : true;
+        /*
+         * نوع فاکتور پارامتر واقعی است، نه تزئینی.
+         *
+         * «تشخیص خودکار» اول از روی متن نوع را می‌فهمد؛ نوع دستی همان را
+         * مستقیم به مرحلهٔ خوانش می‌دهد. سپس پارامترهای هر نوع (شکستن
+         * سطر، پیوند سطرهای شکسته، ادغام ستون) روی پاک‌سازی اعمال می‌شود.
+         */
+        $requested = (string) ($opts['invoice_type'] ?? $opts['type'] ?? 'printed');
+        if (!in_array($requested, array('printed', 'thermal', 'handwritten', 'audio', 'auto'), true)) {
+            $requested = 'printed';
+        }
+        $detected = null;
+        $type = $requested;
+        if ($requested === 'auto') {
+            $detected = fk_detect_invoice_type($rawText);
+            $type = (string) $detected['type'];
+        }
+        $typeOpts = fk_type_options($type);
+        if (array_key_exists('autofix', $opts)) {
+            $autofix = (bool) $opts['autofix'];
+        } else {
+            $autofix = (bool) $typeOpts['autofix'];
+        }
         // پاکسازی کامل پیش از هر چیز: نویز، سرصفحه، سطر شکسته، تکرار
         $text = fk_clean_for_reading($rawText);
+        /* اثر نوع فاکتور بر متن: دست‌نویس و فیش حرارتی سطرهای شکسته
+           دارند که باید به هم بچسبند تا یک قلم کامل شود. */
+        if ($type === 'handwritten' || $type === 'thermal') {
+            $text = fk_join_wrapped($text);
+        }
+        if (!empty($typeOpts['merge_columns'])) {
+            $text = preg_replace('/\t+/u', ' ', $text) ?? $text;
+        }
 
         // ۱) سطرهای خالی و حاشیه‌ای
         $warnings = array();
@@ -508,7 +679,8 @@ if (!function_exists('fk_understand')) {
         // ۲) ستون‌سازی
         $rows = array();
         foreach ($lines as $ln) {
-            $cells = fk_split_columns($ln);
+            /* فاکتور صوتی ستون ندارد: کل سطر یک سلول است. */
+            $cells = !empty($typeOpts['merge_columns']) ? array($ln) : fk_split_columns($ln);
             if ($cells) $rows[] = $cells;
         }
 
@@ -556,6 +728,12 @@ if (!function_exists('fk_understand')) {
         $res['column_types'] = $columnTypes;
         $res['mapping'] = $map;
         $res['autofixed'] = $autofixed;
+        $res['invoice_type'] = $type;
+        $res['type_label'] = (string) $typeOpts['label'];
+        $res['type_source'] = $requested === 'auto' ? 'auto' : 'manual';
+        if ($detected !== null) {
+            $res['detection'] = $detected;
+        }
         return $res;
     }
 

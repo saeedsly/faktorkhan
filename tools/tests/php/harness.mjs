@@ -7,6 +7,7 @@ const UB = s => Buffer.from(s, "base64").toString("utf8");
 
 const lib = fs.readFileSync(`${SRC}/lib.php`, "utf8");
 const engine = fs.readFileSync(`${SRC}/engine.php`, "utf8");
+const library = fs.readFileSync(`${SRC}/library.php`, "utf8");
 const idx = fs.readFileSync(`${SRC}/index.php`, "utf8").replace("declare(strict_types=1);", "");
 
 const STUBS = `<?php
@@ -58,6 +59,7 @@ ini_set('display_errors','1'); error_reporting(E_ALL & ~E_DEPRECATED & ~E_WARNIN
 @mkdir('/tmp/fk/fk-sessions', 0777, true); @mkdir('/tmp/fk/fk-jobs', 0777, true); @mkdir('/tmp/fk/fk-uploads', 0777, true);
 file_put_contents('/tmp/fk/lib.php', base64_decode('${B(lib)}'));
 file_put_contents('/tmp/fk/engine.php', base64_decode('${B(engine)}'));
+file_put_contents('/tmp/fk/library.php', base64_decode('${B(library)}'));
 /* php-wasm هنگام exit تابع shutdown را اجرا نمی‌کند؛ پس exit را عوض می‌کنیم */
 $__idx = base64_decode('${B(idx)}');
 $__idx = str_replace('echo json_encode($data, JSON_UNESCAPED_UNICODE);\n    exit;',
@@ -76,7 +78,7 @@ register_shutdown_function(function () {
     $files = array();
     foreach (array('/tmp/fk/fk-sessions', '/tmp/fk/fk-jobs', '/tmp/fk/fk-uploads', '/tmp/fk') as $dir) {
         foreach (glob($dir . '/*') ?: array() as $f) {
-            if (is_file($f) && !in_array(basename($f), array('lib.php','index.php','stubs.php'), true)) {
+            if (is_file($f) && !in_array(basename($f), array('lib.php','index.php','stubs.php','library.php','engine.php'), true)) {
                 $files[substr($f, 8)] = base64_encode((string) file_get_contents($f));
             }
         }

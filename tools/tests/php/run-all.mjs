@@ -32,6 +32,8 @@ const ORDER = [
   ["loginlim.mjs",  "محدودیت تلاش ورود"],
   ["isolation.mjs", "جداسازی کاربران (امنیت)"],
   ["hist5.mjs",     "تاریخچه، آمار، جستجو، CSV"],
+  ["pro.mjs",       "پنل حرفه‌ای: ورود، داشبورد، بایگانی، تشخیص نوع"],
+  ["render.mjs",    "سالم بودن ساختار صفحه و اسکریپت"],
   ["checkinv.mjs",  "checkconvert روی تصویر صدا زده نمی‌شود"],
   ["invtest.mjs",   "نجات InvalidParams"],
   ["e2e2.mjs",      "چرخهٔ کامل کار"],

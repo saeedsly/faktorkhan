@@ -10,6 +10,7 @@ const SRC = new URL("../../../deploy/php", import.meta.url).pathname;
 const B = s => Buffer.from(s, "utf8").toString("base64");
 const lib = fs.readFileSync(`${SRC}/lib.php`, "utf8");
 const eng = fs.readFileSync(`${SRC}/engine.php`, "utf8");
+const library = fs.readFileSync(`${SRC}/library.php`, `utf8`);
 const idx = fs.readFileSync(`${SRC}/index.php`, "utf8").replace("declare(strict_types=1);", "");
 
 const now = Math.floor(Date.now() / 1000);
@@ -23,12 +24,13 @@ const mkJob = (id, name, text, total, items) => JSON.stringify({
 
 const SID = "HIST00000000000000000000000000002";
 
-function boot(extra = "", get = "array()") {
+function boot(extra = "", get = "array('v' => 'scan')") {
   return `<?php
 ini_set('display_errors','1'); error_reporting(E_ALL & ~E_DEPRECATED & ~E_WARNING & ~E_NOTICE);
 @mkdir('/tmp/fkh/fk-sessions',0777,true);@mkdir('/tmp/fkh/fk-jobs',0777,true);@mkdir('/tmp/fkh/fk-uploads',0777,true);
 file_put_contents('/tmp/fkh/lib.php', base64_decode('${B(lib)}'));
 file_put_contents('/tmp/fkh/engine.php', base64_decode('${B(eng)}'));
+file_put_contents('/tmp/fkh/library.php', base64_decode('${B(library)}'));
 file_put_contents('/tmp/fkh/index.php', base64_decode('${B(idx)}'));
 file_put_contents('/tmp/fkh/fk-config.json', '{"token":"T","password_hash":"x"}');
 ${extra}
@@ -65,7 +67,7 @@ file_put_contents('/tmp/fkh/fk-sessions/sess_${SID}', base64_decode('${B('auth|b
 const html = await run(boot(JOBS));
 ck("صفحه رندر شد", html.length > 5000, String(html.length));
 ck("بدون خطای PHP", !/Fatal error|Parse error/i.test(html));
-ck("تاریخچه هست", html.includes("تاریخچهٔ فاکتورها"));
+ck("تاریخچه هست", html.includes("تاریخچهٔ خوانش"));
 ck("۳ فاکتور نمایش داده شد", (html.match(/data-job="/g) || []).length === 3,
    String((html.match(/data-job="/g) || []).length));
 const statsBlock = (html.match(/<div class="stats">[\s\S]{0,700}?<\/div>\s*<\/div>/) || [""])[0];
@@ -78,13 +80,13 @@ ck("لینک CSV هست", html.includes("?csv=1"));
 ck("دکمهٔ حذف هست", html.includes('value="forget_job"'));
 
 // ۲) جستجو در نام
-const q1 = await run(boot(JOBS, "array('q' => 'تونر')"));
+const q1 = await run(boot(JOBS, "array('v' => 'scan', 'q' => 'تونر')"));
 ck("جستجو در نام فیلتر کرد",
    q1.includes("فاکتور-تونر.jpg") && !q1.includes("فاکتور-کاغذ.png"),
    String((q1.match(/data-job="/g) || []).length));
 
 // ۳) جستجوی بی‌نتیجه
-const q2 = await run(boot(JOBS, "array('q' => 'کاملا-نامربوط')"));
+const q2 = await run(boot(JOBS, "array('v' => 'scan', 'q' => 'کاملا-نامربوط')"));
 ck("جستجوی بی‌نتیجه پیام دارد", q2.includes("پیدا نشد"));
 ck("جستجوی بی‌نتیجه خطا ندارد", !/Fatal error/.test(q2));
 

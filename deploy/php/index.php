@@ -17,6 +17,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/lib.php';
+require_once __DIR__ . '/library.php';   // بایگانی فاکتور (ثبت، جست‌وجو، آمار)
 
 @ini_set('display_errors', '1');
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
@@ -51,6 +52,100 @@ if ($api !== '') {
             @session_write_close();
         }
     };
+
+    /* ════════ بایگانی فاکتور ════════
+       ثبت فاکتور از خروجی خوانش، فهرست زنده و حذف. همه از لایهٔ
+       مالکیت عبور می‌کنند تا فاکتور دیگران هرگز دیده نشود. */
+
+    if ($api === 'invoice_save') {
+        $id = (string) ($_POST['job_id'] ?? $_GET['job_id'] ?? '');
+        $job = job_load_owned($id);
+        if ($job === null) {
+            json_out(array('ok' => false, 'error' => 'notfound',
+                'message' => 'این کار پیدا نشد.'), 404);
+        }
+        if (job_is_terminal($job) && (string) ($job['status'] ?? '') !== 'done') {
+            json_out(array('ok' => false,
+                'message' => 'این فایل هنوز خوانده نشده؛ بعد از آماده‌شدن ثبت کنید.'), 409);
+        }
+        $freeSession();
+        $overrides = array(
+            'number' => trim((string) ($_POST['number'] ?? '')),
+            'date' => trim((string) ($_POST['date'] ?? '')),
+            'seller' => trim((string) ($_POST['seller'] ?? '')),
+            'buyer' => trim((string) ($_POST['buyer'] ?? '')),
+        );
+        $invoice = inv_from_job($job, $overrides);
+
+        /* اگر کاربر اقلام را در جدول ویرایش کرده، همان مرجع است */
+        $posted = json_decode((string) ($_POST['items'] ?? ''), true);
+        if (is_array($posted) && $posted) {
+            $clean = array();
+            foreach ($posted as $it) {
+                $desc = trim((string) ($it['description'] ?? ''));
+                if ($desc === '') {
+                    continue;
+                }
+                $qty = max(0, (int) ($it['qty'] ?? 0));
+                $price = max(0, (int) ($it['unit_price'] ?? 0));
+                $total = max(0, (int) ($it['total'] ?? 0));
+                $clean[] = array(
+                    'description' => substr($desc, 0, 300),
+                    'qty' => $qty,
+                    'unit' => substr((string) ($it['unit'] ?? ''), 0, 20),
+                    'unit_price' => $price,
+                    'discount' => max(0, (int) ($it['discount'] ?? 0)),
+                    'total' => $total ?: $qty * $price,
+                );
+            }
+            if ($clean) {
+                $invoice['items'] = $clean;
+                $sum = 0;
+                foreach ($clean as $c) {
+                    $sum += (int) $c['total'];
+                }
+                $invoice['items_sum'] = $sum;
+            }
+        }
+        foreach (array('subtotal', 'tax', 'discount', 'total') as $k) {
+            if (isset($_POST[$k]) && $_POST[$k] !== '') {
+                $invoice[$k] = (int) preg_replace('/[^\d-]/', '', (string) $_POST[$k]);
+            }
+        }
+        $invoice['note'] = substr(trim((string) ($_POST['note'] ?? '')), 0, 2000);
+        $tags = array_filter(array_map('trim', explode(',', (string) ($_POST['tags'] ?? ''))));
+        $invoice['tags'] = array_values($tags);
+
+        if (!inv_save($invoice)) {
+            json_out(array('ok' => false,
+                'message' => 'ذخیرهٔ فاکتور ممکن نشد؛ دسترسی نوشتن پوشهٔ fk-invoices را بررسی کنید.'), 500);
+        }
+        $job['invoice_id'] = $invoice['id'];
+        job_save($job);
+        json_out(array('ok' => true, 'invoice' => array(
+            'id' => $invoice['id'],
+            'number' => $invoice['number'],
+            'total' => $invoice['total'],
+            'items' => count($invoice['items']),
+        )));
+    }
+
+    if ($api === 'invoices') {
+        $freeSession();
+        json_out(array(
+            'ok' => true,
+            'invoices' => inv_list((string) ($_GET['q'] ?? ''), (string) ($_GET['sort'] ?? 'new'), 300),
+            'stats' => inv_stats(),
+        ));
+    }
+
+    if ($api === 'invoice_delete') {
+        $freeSession();
+        if (!inv_delete((string) ($_POST['id'] ?? $_GET['id'] ?? ''))) {
+            json_out(array('ok' => false, 'message' => 'فاکتور پیدا نشد.'), 404);
+        }
+        json_out(array('ok' => true));
+    }
 
     /* ── وضعیت کار ─────────────────────────────────────────── */
     if ($api === 'job') {
@@ -225,6 +320,13 @@ if ($api !== '') {
             $output = 'keeplayout';
         }
         $deleteAfter = !empty($_POST['delete_after']);
+        /* نوع فاکتور از رابط می‌آید و در خود «کار» ذخیره می‌شود، نه
+           فقط در فرم: چون خوانش در درخواست‌های بعدی (poll) ادامه پیدا
+           می‌کند و آن‌جا دیگر فرم در دسترس نیست. */
+        $invoiceType = (string) ($_POST['invoice_type'] ?? 'printed');
+        if (!in_array($invoiceType, array('printed', 'thermal', 'handwritten', 'audio', 'auto'), true)) {
+            $invoiceType = 'printed';
+        }
 
         /* فایل را روی همین سرور نگه می‌داریم؛ ارسال به سرویس ابری در
            درخواست‌های کوتاه بعدی (poll) انجام می‌شود. */
@@ -241,6 +343,7 @@ if ($api !== '') {
             'output' => $output,
             'size' => (int) $file['size'],
             'engine' => $engine,
+            'invoice_type' => $invoiceType,
         ));
         $job = job_queue($job, $stashed, $sendName, $mime, $method, $output, $deleteAfter);
         if ($engine === 'ai') {
@@ -436,6 +539,26 @@ if ($method === 'GET' && isset($_GET['cleanup'])) {
     redirect();
 }
 
+/* ═══════════ خروجی CSV از بایگانی فاکتورها ═══════════
+ * (متفاوت با ?csv=1 که کارهای این نشست را می‌دهد)
+ */
+if ($method === 'GET' && isset($_GET['archive'])) {
+    if (!is_logged_in()) {
+        redirect();
+    }
+    start_session();
+    @session_write_close();
+    $csv = inv_csv();
+    $name = 'faktorkhan-invoices-' . date('Ymd-His') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $name . '"');
+    header('Content-Length: ' . strlen($csv));
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo $csv;
+    exit;
+}
+
 /* ═══════════ خروجی CSV از همهٔ فاکتورهای این نشست ═══════════
  *
  * کاربری که فاکتورهای یک ماه را خوانده باید بتواند همه را یک‌جا در
@@ -461,6 +584,17 @@ if ($method === 'GET' && isset($_GET['csv'])) {
     header('X-Content-Type-Options: nosniff');
     echo $csv;
     exit;
+}
+
+/* ═══════════ حذف یک فاکتور از بایگانی ═══════════ */
+if ($method === 'POST' && $action === 'delete_invoice') {
+    if (!is_logged_in() || !csrf_ok($_POST['csrf'] ?? null)) {
+        flash('error', 'دسترسی غیرمجاز.');
+        redirect();
+    }
+    $ok = inv_delete((string) ($_POST['id'] ?? ''));
+    flash($ok ? 'ok' : 'error', $ok ? 'فاکتور از بایگانی حذف شد.' : 'فاکتور پیدا نشد.');
+    redirect('?v=archive');
 }
 
 /* ═══════════ حذف یک کار از تاریخچه ═══════════ */
@@ -515,6 +649,35 @@ if ($logged) {
     $stats = job_stats($allJobs, $loadedJobs);
     $recent = job_list($allJobs, $historyQuery, 50, $loadedJobs);
 }
+
+/* ── بایگانی فاکتورها ──
+ * همان چیزی که نسخهٔ «ساده» نداشت: فاکتور ثبت می‌شود، آرشیو می‌ماند،
+ * جست‌وجو و آمار دارد. جدا از «کارهای خوانش» است. */
+$emptyArch = array('count' => 0, 'sum' => 0, 'items' => 0, 'tax' => 0,
+                   'confirmed' => 0, 'avg_confidence' => 0, 'avg_invoice' => 0,
+                   'sellers' => array(), 'months' => array());
+$archStats = $emptyArch;
+$archive = array();
+$archiveQuery = '';
+if ($logged) {
+    $archiveQuery = trim((string) ($_GET['aq'] ?? ''));
+    $archiveSort = (string) ($_GET['as'] ?? 'new');
+    if (!in_array($archiveSort, array('new', 'old', 'amount'), true)) {
+        $archiveSort = 'new';
+    }
+    try {
+        $archStats = inv_stats();
+        $archive = inv_list($archiveQuery, $archiveSort, 200);
+    } catch (Throwable $e) {
+        $archStats = $emptyArch;   /* آمار خراب نباید کل صفحه را بیندازد */
+    }
+}
+
+/* نمای فعال. پیش‌فرض «داشبورد» است تا بعد از ورود، اول آمار دیده شود. */
+$view = (string) ($_GET['v'] ?? 'dashboard');
+if (!in_array($view, array('dashboard', 'scan', 'archive', 'settings'), true)) {
+    $view = 'dashboard';
+}
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -529,7 +692,6 @@ if ($logged) {
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(1100px 560px at 82% -12%,#1a2233 0%,#0b0d12 58%) fixed;
        color:var(--txt);font-family:Vazirmatn,Tahoma,system-ui,sans-serif;line-height:1.9;padding:16px}
-  .wrap{max-width:960px;margin:0 auto}
   .brand{display:flex;align-items:center;gap:12px;margin:16px 0 20px}
   .mark{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#f5e6a8,#d4af37);
         display:grid;place-items:center;color:#1a1508;font-weight:800;font-size:19px}
@@ -626,328 +788,814 @@ if ($logged) {
   .hitem .hact button{padding:5px 10px;font-size:11.5px;border-radius:8px}
   .hempty{padding:18px 0;text-align:center;color:var(--dim);font-size:12.5px}
   .hint{font-size:11.5px;color:var(--dim);margin:8px 0 0}
+
+  /* ═══════════════ پوستهٔ حرفه‌ای: سایدبار + تاپ‌بار ═══════════════
+     نسخهٔ قبلی یک ستون باریک وسط صفحه بود؛ برای کار روزمره با ده‌ها
+     فاکتور جا نداشت. این پوسته همان ساختار نسخهٔ پایتون را می‌سازد. */
+  body{padding:0;line-height:1.85}
+  .shell{display:flex;min-height:100vh}
+
+  .side{width:228px;flex-shrink:0;background:linear-gradient(180deg,#101521,#0c1017);
+        border-inline-start:1px solid var(--line);display:flex;flex-direction:column;
+        position:sticky;top:0;height:100vh;padding:16px 12px;gap:6px;z-index:40}
+  .side .logo{display:flex;align-items:center;gap:10px;padding:4px 6px 16px}
+  .side .logo .mark{width:38px;height:38px;font-size:17px;border-radius:11px}
+  .side .logo b{font-size:14.5px;display:block;line-height:1.4}
+  .side .logo span{font-size:10.5px;color:var(--dim)}
+  .nav{display:flex;flex-direction:column;gap:3px}
+  .nav a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;
+         color:var(--dim);text-decoration:none;font-size:13px;font-weight:600;transition:.14s}
+  .nav a:hover{background:rgba(255,255,255,.045);color:var(--txt)}
+  .nav a.on{background:linear-gradient(90deg,rgba(212,175,55,.17),rgba(212,175,55,.03));
+            color:var(--gold);box-shadow:inset -3px 0 0 var(--gold)}
+  .side .sep{height:1px;background:var(--line);margin:10px 6px}
+  .side .foot{margin-top:auto;font-size:10.5px;color:#5d6779;padding:8px 6px;line-height:1.9}
+  .side .badge{margin-inline-start:auto;background:rgba(212,175,55,.16);color:var(--gold);
+        border-radius:999px;font-size:10px;padding:1px 7px;font-weight:700}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;gap:12px;padding:14px 22px;border-bottom:1px solid var(--line);
+       background:rgba(11,13,18,.75);position:sticky;top:0;z-index:30}
+  .top h1{font-size:16.5px;margin:0}
+  .top .tsub{font-size:11.5px;color:var(--dim);margin-top:1px}
+  .top .grow{flex:1}
+  .top .who{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:8px}
+  .top .avatar{width:28px;height:28px;border-radius:9px;background:rgba(212,175,55,.16);
+       color:var(--gold);display:grid;place-items:center;font-weight:800;font-size:12px}
+  .top form{display:inline}
+  .content{padding:20px 22px 40px;max-width:1180px;width:100%}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px;margin-bottom:16px}
+  .kcard{position:relative;overflow:hidden;background:linear-gradient(160deg,#161c29,#11151f);
+         border:1px solid var(--line);border-radius:15px;padding:15px 16px}
+  .kcard::after{content:'';position:absolute;inset-inline-end:-30px;top:-46px;width:120px;height:120px;
+        background:radial-gradient(circle,var(--kc,rgba(212,175,55,.34)),transparent 70%);opacity:.6}
+  .kcard .kl{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:7px;position:relative}
+  .kcard .kv{font-size:23px;font-weight:800;margin-top:6px;color:var(--txt);
+        font-variant-numeric:tabular-nums;position:relative;line-height:1.3}
+  .kcard .kf{font-size:11px;color:var(--dim);margin-top:3px;position:relative}
+  .kcard .kf b{color:var(--gold)}
+
+  .cols{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
+  @media (max-width:980px){.cols{grid-template-columns:1fr}}
+
+  .bars{display:flex;align-items:flex-end;gap:7px;height:150px;padding:8px 2px 0;direction:ltr}
+  .bars .b{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px;height:100%}
+  .bars .b i{display:block;width:100%;border-radius:6px 6px 2px 2px;
+        background:linear-gradient(180deg,#e5c258,#8a6d16);min-height:3px}
+  .bars .b span{font-size:9.5px;color:#5d6779;white-space:nowrap}
+  .bars .b em{font-size:9.5px;color:var(--dim);font-style:normal}
+
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+  .tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .tbl th{background:rgba(255,255,255,.035);color:var(--dim);font-weight:600;text-align:right;
+        padding:10px 11px;white-space:nowrap;border-bottom:1px solid var(--line);font-size:11.5px}
+  .tbl td{padding:10px 11px;border-bottom:1px solid rgba(37,44,59,.55);vertical-align:middle}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl tbody tr:hover{background:rgba(255,255,255,.022)}
+  .tbl .num{font-variant-numeric:tabular-nums;direction:ltr;text-align:left}
+  .tbl .fname{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        color:var(--dim);font-size:11px;direction:ltr}
+  .tbl .acts{display:flex;gap:5px}
+  .tbl .acts button{padding:4px 9px;font-size:11px;border-radius:7px}
+
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .toolbar input[type=text]{flex:1;min-width:180px}
+  .toolbar select{width:auto;min-width:130px}
+
+  .blank{text-align:center;padding:44px 20px;color:var(--dim)}
+  .blank .ic{font-size:38px;display:block;margin-bottom:10px;opacity:.55}
+  .blank b{display:block;color:var(--txt);font-size:14px;margin-bottom:5px}
+
+  .auth{min-height:100vh;display:grid;place-items:center;padding:20px}
+  .auth .box{width:100%;max-width:392px}
+  .auth .logo{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:22px}
+  .auth .logo .mark{width:48px;height:48px;font-size:21px;border-radius:14px}
+  .auth .logo b{font-size:17px;display:block}
+  .auth .logo span{font-size:11.5px;color:var(--dim)}
+  .auth .card{padding:22px}
+
+  .burger{display:none;background:transparent;border:1px solid var(--line);padding:6px 10px;font-size:15px}
+  @media (max-width:860px){
+    .side{position:fixed;inset-inline-start:0;top:0;width:252px;transform:translateX(105%);
+          transition:transform .2s;box-shadow:-8px 0 40px #000;height:100vh}
+    body[dir=rtl] .side{transform:translateX(105%)}
+    .side.open{transform:translateX(0)!important}
+    .burger{display:block}
+    .content{padding:14px}
+    .top{padding:11px 14px}
+    .kpis{grid-template-columns:1fr 1fr}
+    .cols{grid-template-columns:1fr}
+  }
+  /* جدول اقلام موتور فهم در صفحهٔ خوانش */
+  #uf-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+  #uf-table th{background:rgba(255,255,255,.04);color:var(--dim);font-weight:600;
+       padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);font-size:11px}
+  #uf-table td{padding:7px 9px;border-bottom:1px solid rgba(37,44,59,.5)}
+  #uf-table input{width:100%;padding:5px 7px;font-size:11.5px;border-radius:6px}
 </style>
+
 </head>
 <body>
-<div class="wrap">
-  <div class="brand">
-    <div class="mark">ف</div>
-    <div>
-      <h1><?= h(APP_TITLE) ?></h1>
-      <div class="sub">نسخهٔ PHP — <?= h(PHP_VERSION) ?> · پردازش پس‌زمینه (بدون قفل شدن صفحه)</div>
-    </div>
-  </div>
+<?php
+/* ── نماهای پنل ──
+   همان چهار بخش نسخهٔ پایتون: داشبورد، خوانش، بایگانی، تنظیمات.
+   همه با GET کار می‌کنند تا هر صفحه نشانی مستقل و قابل رفرش داشته باشد. */
+$navTabs = array(
+    'dashboard' => array('داشبورد', '📊'),
+    'scan' => array('خوانش فاکتور', '📄'),
+    'archive' => array('بایگانی فاکتورها', '🗂'),
+    'settings' => array('تنظیمات', '⚙'),
+);
+?>
 
-  <?php if ($flash): ?>
-    <div class="flash <?= $flash['type'] === 'ok' ? 'ok' : 'error' ?>"><?= h($flash['message']) ?></div>
-  <?php endif; ?>
-
-  <?php if (!$phpOk || !$hasCurl): ?>
-    <div class="card">
-      <h2>⚠️ پیش‌نیاز</h2>
-      <?php if (!$phpOk): ?>
-        <p class="muted">نسخهٔ PHP این سرور <?= h(PHP_VERSION) ?> است؛ حداقل 7.4 لازم است.</p>
-      <?php endif; ?>
-      <?php if (!$hasCurl): ?>
-        <p class="muted">افزونهٔ <b class="ltr">curl</b> فعال نیست. در WAMP: آیکن → PHP → php.ini →
-          خط <b class="ltr">;extension=curl</b> را به <b class="ltr">extension=curl</b> تغییر دهید و Apache را ری‌استارت کنید.</p>
-      <?php endif; ?>
-    </div>
-  <?php endif; ?>
-
-  <?php if (!$logged && !password_is_set()): ?>
-    <div class="card">
-      <h2>🔐 گام ۱ — گذرواژهٔ این ابزار را تعیین کنید</h2>
-      <p class="muted">این گذرواژه فقط برای ورود به همین صفحه است تا دیگران از اعتبار شما استفاده نکنند.</p>
-      <form method="post" autocomplete="off">
-        <input type="hidden" name="action" value="setup_password">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <label>گذرواژه (حداقل ۸ کاراکتر)</label>
-        <input type="password" name="new_password" required minlength="8" dir="ltr">
-        <label>تکرار گذرواژه</label>
-        <input type="password" name="confirm_password" required minlength="8" dir="ltr">
-        <div class="row" style="margin-top:14px"><button class="primary" type="submit">ذخیره و ادامه</button></div>
-      </form>
+<?php if (!$logged): ?>
+<div class="auth">
+  <div class="box">
+    <div class="logo">
+      <div class="mark">ف</div>
+      <div>
+        <b>فاکتورخوان</b>
+        <span>خوانش هوشمند فاکتور</span>
+      </div>
     </div>
 
-  <?php elseif (!$logged): ?>
-    <div class="card">
-      <h2>🔑 ورود</h2>
-      <form method="post" autocomplete="off">
-        <input type="hidden" name="action" value="login">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <label>گذرواژه</label>
-        <input type="password" name="password" required dir="ltr" autofocus>
-        <div class="row" style="margin-top:14px"><button class="primary" type="submit">ورود</button></div>
-      </form>
-    </div>
+    <?php if ($flash): ?>
+      <div class="flash <?= $flash['type'] === 'ok' ? 'ok' : 'error' ?>"><?= h($flash['message']) ?></div>
+    <?php endif; ?>
 
-  <?php else: ?>
-
-    <div class="card">
-      <h2>☁️ توکن سرویس ابری
-        <span class="pill <?= $tokenSet ? 'ok' : 'bad' ?>"><?= $tokenSet ? 'ثبت‌شده' : 'ثبت نشده' ?></span>
-      </h2>
-      <table>
-        <tr><td>درگاه</td><td><?= gateway_url() !== '' ? 'آماده (درون برنامه)' : 'نامعتبر' ?></td></tr>
-        <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= $tokenSet ? h($tokenMasked) : '—' ?></td></tr>
-      </table>
-      <form method="post" autocomplete="off" style="margin-top:12px">
-        <input type="hidden" name="action" value="save_token">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <label><?= $tokenSet ? 'جایگزینی توکن' : 'توکن را بچسبانید' ?></label>
-        <input type="text" name="token" dir="ltr" placeholder="توکن API" required>
-        <div class="row" style="margin-top:12px">
-          <button class="primary" type="submit">ذخیره توکن</button>
-          <button type="submit" name="action" value="test_credit" formnovalidate>تست اعتبار</button>
-          <?php if ($tokenSet): ?>
-            <button class="danger" type="submit" name="action" value="clear_token" formnovalidate>حذف توکن</button>
-          <?php endif; ?>
-        </div>
-      </form>
-    </div>
-
-    <div class="card">
-      <h2>🤖 موتور هوش مصنوعی (اختیاری)
-        <span class="pill <?= $aiKeySet ? 'ok' : 'wait' ?>"><?= $aiKeySet ? 'فعال' : 'خاموش' ?></span>
-      </h2>
-      <p class="muted" style="margin:0 0 10px">
-        موتور دوم برای فاکتور <b>دست‌نویس</b> و عکس‌های تار/کج که سرویس ابری ضعیف می‌خواند.
-        اگر خاموش بماند، همه‌چیز مثل قبل با سرویس ابری کار می‌کند.
-        کلید فقط روی همین سرور می‌ماند و هیچ‌وقت در صفحه دیده نمی‌شود.
-      </p>
-      <table>
-        <tr><td>وضعیت</td><td><?= $aiKeySet ? 'کلید ثبت شده' : 'بدون کلید' ?></td></tr>
-        <?php if ($aiKeySet): ?>
-          <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= h($aiKeyMasked) ?></td></tr>
+    <?php if (!$phpOk || !$hasCurl): ?>
+      <div class="card" style="margin-bottom:12px">
+        <h2>⚠️ پیش‌نیاز</h2>
+        <?php if (!$phpOk): ?>
+          <p class="muted">نسخهٔ PHP این سرور <?= h(PHP_VERSION) ?> است؛ حداقل 7.4 لازم است.</p>
         <?php endif; ?>
-        <tr><td>روش کار</td><td>تصویر مستقیم به مدل بینایی داده می‌شود (<span class="ltr">Base64</span>)</td></tr>
-      </table>
-      <form method="post" autocomplete="off" style="margin-top:12px">
-        <input type="hidden" name="action" value="save_ai_key">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <label><?= $aiKeySet ? 'جایگزینی کلید' : 'کلید موتور هوش مصنوعی را بچسبانید' ?></label>
-        <input type="text" name="ai_key" dir="ltr" placeholder="کلید" required>
-        <div class="row" style="margin-top:12px">
-          <button class="primary" type="submit">ذخیره کلید</button>
-          <?php if ($aiKeySet): ?>
-            <button class="danger" type="submit" name="action" value="clear_ai_key" formnovalidate>حذف کلید</button>
-          <?php endif; ?>
-        </div>
-      </form>
-    </div>
+        <?php if (!$hasCurl): ?>
+          <p class="muted">افزونهٔ <b class="ltr">curl</b> فعال نیست. در WAMP: آیکن → PHP → php.ini →
+            خط <b class="ltr">;extension=curl</b> را به <b class="ltr">extension=curl</b> تغییر دهید و Apache را ری‌استارت کنید.</p>
+        <?php endif; ?>
+      </div>
+    <?php endif; ?>
 
     <div class="card">
-      <h2>📄 پردازش فایل</h2>
-      <form id="upload-form" autocomplete="off">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <label>فایل (عکس، PDF یا صوتی)</label>
-        <input type="file" name="document" id="doc" required
-               accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
-        <div class="row" style="margin-top:10px">
-          <div>
-            <label>موتور خوانش</label>
-            <select name="engine" id="engine">
-              <option value="cloud" selected>سرویس ابری — پیش‌فرض (چاپی و تایپی)</option>
-              <option value="ai"<?= $aiKeySet ? '' : ' disabled' ?>>موتور هوش مصنوعی — دست‌نویس و عکس سخت<?= $aiKeySet ? '' : ' (کلید ندارد)' ?></option>
-            </select>
-            <p class="muted" style="margin:6px 0 0;font-size:11px">
-              <?php if ($aiKeySet): ?>
-                اگر خروجی سرویس ابری خالی بود، خودکار موتور هوش مصنوعی هم امتحان می‌شود.
-              <?php else: ?>
-                برای فعال‌کردن موتور دوم، در کارت «موتور هوش مصنوعی» بالای صفحه یک کلید ثبت کنید.
-              <?php endif; ?>
-            </p>
-          </div>
-          <div>
-            <label>روش تبدیل</label>
-            <select name="method" id="method">
-              <option value="4" selected>استخراج متن — سریع‌ترین و مناسب فاکتور</option>
-              <option value="1">Word (فقط PDF متنی — کندتر)</option>
-              <option value="2">Word با حفظ ساختار (فقط PDF)</option>
-              <option value="3">Word — حالت سوم (فقط PDF)</option>
-            </select>
-            <p class="muted" style="margin:6px 0 0;font-size:11px">
-              برای عکس و فاکتور دست‌نویس، سرویس ابری فقط «استخراج متن» را می‌پذیرد؛
-              اگر گزینهٔ دیگری انتخاب شود، برنامه خودکار همان را می‌فرستد.
-            </p>
-          </div>
-          <div>
-            <label>قالب خروجی</label>
-            <select name="output" id="output">
-              <option value="keeplayout" selected>متن + Word — پیشنهادی ⚡</option>
-              <option value="txt">فقط متن — کمی سریع‌تر</option>
-              <option value="txtraw">متن خام — سریع</option>
-              <option value="txtrawjson">متن + مختصات (JSON) — کندترین</option>
-            </select>
-            <p class="muted" style="margin:6px 0 0;font-size:11px">
-              در هر حالت، متن خوانده‌شده در باکس همین صفحه می‌آید و قابل ویرایش و کپی است.
-              «مختصات» موقعیت هر کلمه را هم می‌فرستد و چند برابر کندتر است.
-            </p>
-          </div>
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
-          <input type="checkbox" name="delete_after" value="1" checked style="width:auto">
-          حذف فایل از سرور ابری پس از پردازش (توصیه می‌شود)
-        </label>
-        <div class="row" style="margin-top:12px">
-          <button class="primary" type="submit" id="go">ارسال و خوانش</button>
-          <button type="button" class="danger" id="stop" style="display:none">لغو پردازش</button>
-        </div>
-      </form>
-      <p class="muted">حداکثر حجم: <b class="ltr"><?= h($uploadMax) ?></b> ·
-        حداکثر POST: <b class="ltr"><?= h($postMax) ?></b> ·
-        پردازش در پس‌زمینه انجام می‌شود و صفحه قفل نمی‌شود.</p>
-
-      <div id="job" style="display:none;margin-top:16px">
-        <div class="job-row">
-          <span id="job-name" class="ltr" style="color:var(--dim)"></span>
-          <span id="job-state" class="pill wait">در صف</span>
-        </div>
-        <div class="progress" id="bar-wrap"><i id="bar"></i></div>
-        <p class="muted" id="job-msg" style="margin:0"></p>
-        <p class="muted" id="job-meta"></p>
-        <p class="muted" id="job-elapsed" style="margin:0;font-size:12px">
-          زمان سپری‌شده: <b class="ltr" id="job-clock">۰</b>
+      <?php if (!password_is_set()): ?>
+        <h2>🔐 ساخت گذرواژه</h2>
+        <p class="muted" style="margin:0 0 6px">
+          اولین بار است که این ابزار را باز می‌کنید. یک گذرواژه برای این نصب تعیین کنید؛
+          از این به بعد با همین گذرواژه وارد می‌شوید.
         </p>
-        <div id="result" style="display:none">
-          <div class="kpi" id="kpi"></div>
-          <div class="textbar">
-            <span class="muted" id="textinfo" style="margin:0"></span>
-            <span class="sp"></span>
-            <button type="button" class="ghost" id="btn-copy">کپی متن</button>
-            <button type="button" class="ghost" id="btn-txt">دانلود متن (TXT)</button>
-            <button type="button" class="ghost" id="btn-doc">دانلود Word</button>
-            <button type="button" class="ghost danger" id="btn-del" style="display:none">حذف فایل‌ها</button>
+        <p class="hint" style="margin:0 0 14px">
+          این گذرواژه فقط برای ورود به همین صفحه است تا دیگران از اعتبار سرویس شما استفاده نکنند.
+        </p>
+        <form method="post" autocomplete="off">
+          <input type="hidden" name="action" value="setup_password">
+          <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+          <label>گذرواژه (حداقل ۸ کاراکتر)</label>
+          <input type="password" name="new_password" required minlength="8" dir="ltr" autofocus>
+          <label>تکرار گذرواژه</label>
+          <input type="password" name="confirm_password" required minlength="8" dir="ltr">
+          <div class="row" style="margin-top:16px">
+            <button class="primary" type="submit" style="width:100%">ذخیره و ادامه</button>
           </div>
-          <div id="understood" style="display:none;margin-top:14px">
-            <div class="ufhead">
-              <strong>🧠 موتور فهم اقلام</strong>
-              <span class="muted" id="uf-summary" style="margin:0"></span>
-              <span class="sp"></span>
-              <button type="button" class="ghost" id="btn-tab">نمای جدول</button>
-              <button type="button" class="ghost" id="btn-cleantext" title="متن یکدست‌شده در کادر می‌آید">متن پاک‌شده</button>
-            </div>
-            <div id="uf-meta" class="uf-meta" style="display:none"></div>
-            <div id="uf-issues"></div>
-            <div id="uf-suggest" class="uf-suggest" style="display:none"></div>
-            <div id="uf-table-wrap">
-              <table id="uf-table">
-                <thead><tr>
-                  <th>#</th><th>شرح کالا / خدمت</th><th>تعداد</th><th>واحد</th>
-                  <th>قیمت واحد</th><th>مبلغ</th>
-                </tr></thead>
-                <tbody></tbody>
-                <tfoot></tfoot>
-              </table>
-            </div>
-          </div>
-          <textarea id="text" spellcheck="false" placeholder="متن خوانده‌شده این‌جا می‌آید…"></textarea>
-          <p class="muted" id="saved" style="display:none"></p>
-          <p class="muted" id="txthint" style="display:none">
-            متن را می‌توانید همین‌جا ویرایش کنید؛ برای بردن به اکسل/ورد، «کپی متن» را بزنید.
-          </p>
-        </div>
-        <div id="job-err" class="flash error" style="display:none;margin:12px 0 0"></div>
-      </div>
-    </div>
-
-    <?php if ($allJobs): ?>
-      <div class="card">
-        <h2>📊 تاریخچهٔ فاکتورها
-          <?php if ($stats['count'] > $stats['ok'] + $stats['failed']): ?>
-            <span class="pill wait">۱ در حال پردازش</span>
-          <?php endif; ?>
-        </h2>
-
-        <div class="stats">
-          <div class="stat"><b><?= h(fk_fa_num((int) $stats['count'])) ?></b><span>فاکتور</span></div>
-          <div class="stat"><b><?= h(fk_fa_num((int) $stats['ok'])) ?></b><span>موفق</span></div>
-          <div class="stat"><b><?= h(fk_fa_num((int) $stats['items'])) ?></b><span>قلم کالا</span></div>
-          <div class="stat"><b class="ltr" style="direction:ltr;text-align:right"><?= $stats['total'] > 0 ? h(fk_fmt_amount((int) $stats['total'])) : '—' ?></b><span>جمع کل مبالغ</span></div>
-        </div>
-
-        <form class="hsearch" method="get" action="">
-          <input type="text" name="q" value="<?= h($historyQuery) ?>"
-                 placeholder="جستجو در نام فایل، متن و شمارهٔ فاکتور…" autocomplete="off">
-          <button type="submit" class="ghost">جستجو</button>
-          <?php if ($historyQuery !== ''): ?>
-            <button type="button" class="ghost" onclick="location.href='?'">پاک کردن</button>
-          <?php endif; ?>
         </form>
-
-        <?php if (!$recent): ?>
-          <p class="hempty">فاکتوری با این عبارت پیدا نشد.</p>
-        <?php else: ?>
-          <div class="hlist">
-            <?php foreach ($recent as $r): ?>
-              <div class="hitem">
-                <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
-                  <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در جریان')) ?>
-                </span>
-                <span class="hname ltr" title="<?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>">
-                  <?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>
-                </span>
-                <span class="hmeta">
-                  <?php if ($r['created_fa'] !== ''): ?><?= h($r['created_fa']) ?><?php endif; ?>
-                  <?php if ($r['items'] > 0): ?> · <?= h(fk_fa_num($r['items'])) ?> قلم<?php endif; ?>
-                  <?php if ($r['total'] > 0): ?> · <span class="ltr"><?= h(fk_fmt_amount($r['total'])) ?></span><?php endif; ?>
-                </span>
-                <span class="hact">
-                  <button class="ghost" type="button" data-job="<?= h($r['id']) ?>">نمایش</button>
-                  <?php if ($r['has_text']): ?>
-                    <a href="?api=txt&amp;id=<?= h(urlencode($r['id'])) ?>" target="_blank"
-                       rel="noopener"><button class="ghost" type="button">متن</button></a>
-                  <?php endif; ?>
-                  <form method="post" action="" style="display:inline"
-                        onsubmit="return confirm('این فاکتور از تاریخچه حذف شود؟');">
-                    <input type="hidden" name="action" value="forget_job">
-                    <input type="hidden" name="id" value="<?= h($r['id']) ?>">
-                    <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-                    <button class="ghost" type="submit" title="حذف">✕</button>
-                  </form>
-                </span>
-              </div>
-            <?php endforeach; ?>
+      <?php else: ?>
+        <h2>🔑 ورود به پنل</h2>
+        <p class="muted" style="margin:0 0 14px">
+          برای دیدن داشبورد و بایگانی فاکتورها، گذرواژهٔ این نصب را وارد کنید.
+        </p>
+        <form method="post" autocomplete="off">
+          <input type="hidden" name="action" value="login">
+          <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+          <label>گذرواژه</label>
+          <input type="password" name="password" required dir="ltr" autofocus placeholder="••••••••">
+          <div class="row" style="margin-top:16px">
+            <button class="primary" type="submit" style="width:100%">ورود</button>
           </div>
-        <?php endif; ?>
-
-        <div class="hint">
-          <?php if (count($allJobs) > 0): ?>
-            <a href="?csv=1">⬇️ دانلود همه به‌صورت CSV (برای اکسل)</a> ·
-          <?php endif; ?>
-          <a href="?cleanup=1">پاک کردن کارهای قدیمی</a>
-        </div>
-      </div>
-    <?php endif; ?>
-
-    <div class="card" style="font-size:12px;color:var(--dim)">
-      <h2>🖥 سرور</h2>
-      <table>
-        <tr><td>PHP</td><td class="ltr"><?= h(PHP_VERSION) ?></td></tr>
-        <tr><td>curl</td><td><?= $hasCurl ? 'فعال' : 'غیرفعال' ?></td></tr>
-        <tr><td>حداکثر آپلود</td><td class="ltr"><?= h($uploadMax) ?></td></tr>
-      </table>
-      <p class="muted">
-        <a href="check.php">بررسی سرور</a> ·
-        <a href="diag.php">عیب‌یابی سرویس ابری</a>
-      </p>
-      <form method="post" style="margin-top:8px">
-        <input type="hidden" name="action" value="logout">
-        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
-        <button class="ghost" type="submit">خروج</button>
-      </form>
+        </form>
+      <?php endif; ?>
     </div>
-  <?php endif; ?>
 
-  <div class="foot">
-    فاکتورخوان · توکن هرگز در صفحه نمایش داده نمی‌شود ·
-    <span class="ltr"><?= h(date('Y-m-d H:i')) ?></span>
-    <?php if (is_https()): ?>
-      <br>⚠️ با <b class="ltr">https</b> باز کرده‌اید؛ WAMP معمولاً SSL ندارد — با <b class="ltr">http://</b> باز کنید.
-    <?php endif; ?>
+    <div style="text-align:center;margin-top:16px;font-size:11px;color:#5d6779">
+      نسخهٔ <span class="ltr">PHP <?= h(PHP_VERSION) ?></span> ·
+      بدون نصب، بدون دیتابیس · همه‌چیز روی سرور خودتان
+    </div>
   </div>
 </div>
+
+<?php else: ?>
+<div class="shell">
+  <!-- ═══ نوار کنار ═══ -->
+  <aside class="side" id="side">
+    <div class="logo">
+      <div class="mark">ف</div>
+      <div>
+        <b>فاکتورخوان</b>
+        <span>پنل مدیریت فاکتور</span>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <?php foreach ($navTabs as $key => $t): ?>
+        <a href="?v=<?= h($key) ?>"<?= $view === $key ? ' class="on"' : '' ?>>
+          <span><?= $t[1] ?></span><span><?= h($t[0]) ?></span>
+          <?php if ($key === 'archive' && (int) $archStats['count'] > 0): ?>
+            <span class="badge"><?= h(fk_fa_num((int) $archStats['count'])) ?></span>
+          <?php endif; ?>
+        </a>
+      <?php endforeach; ?>
+    </nav>
+
+    <div class="sep"></div>
+    <a href="?v=scan" style="display:block;padding:10px 11px;border-radius:10px;font-size:12.5px;
+      text-decoration:none;text-align:center;font-weight:700;color:#171207;
+      background:linear-gradient(135deg,#e5c258,#c9a227)">＋ فاکتور جدید</a>
+
+    <div class="foot">
+      <div>فاکتورخوان</div>
+      <div class="ltr">PHP <?= h(PHP_VERSION) ?></div>
+      <?php if (is_https()): ?>
+        <div style="color:#f0a">⚠️ https — با http باز کنید</div>
+      <?php endif; ?>
+    </div>
+  </aside>
+
+  <!-- ═══ ناحیهٔ اصلی ═══ -->
+  <div class="main">
+    <header class="top">
+      <button class="burger" type="button" id="burger" aria-label="منو">☰</button>
+      <div>
+        <h1><?= h($navTabs[$view][0]) ?></h1>
+        <div class="tsub">
+          <?php if ($view === 'dashboard'): ?>
+            نمای کلی بایگانی فاکتورهای شما
+          <?php elseif ($view === 'scan'): ?>
+            فایل را بفرستید؛ متن و اقلام خوانده می‌شود
+          <?php elseif ($view === 'archive'): ?>
+            فاکتورهای ثبت‌شده — جست‌وجو، مشاهده و خروجی اکسل
+          <?php else: ?>
+            توکن سرویس، کلید هوش مصنوعی و وضعیت سرور
+          <?php endif; ?>
+        </div>
+      </div>
+      <div class="grow"></div>
+      <div class="who">
+        <span class="avatar">م</span>
+        <span>مدیر</span>
+      </div>
+      <form method="post" action="">
+        <input type="hidden" name="action" value="logout">
+        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+        <button class="ghost" type="submit" title="خروج">خروج</button>
+      </form>
+    </header>
+
+    <div class="content">
+      <?php if ($flash): ?>
+        <div class="flash <?= $flash['type'] === 'ok' ? 'ok' : 'error' ?>"><?= h($flash['message']) ?></div>
+      <?php endif; ?>
+
+      <?php if (!$phpOk || !$hasCurl): ?>
+        <div class="card" style="margin-bottom:14px">
+          <h2>⚠️ پیش‌نیاز</h2>
+          <?php if (!$phpOk): ?>
+            <p class="muted">نسخهٔ PHP این سرور <?= h(PHP_VERSION) ?> است؛ حداقل 7.4 لازم است.</p>
+          <?php endif; ?>
+          <?php if (!$hasCurl): ?>
+            <p class="muted">افزونهٔ <b class="ltr">curl</b> فعال نیست؛ بدون آن هیچ فایلی خوانده نمی‌شود.</p>
+          <?php endif; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php /* ══════════════ ۱) داشبورد ══════════════ */ ?>
+      <?php if ($view === 'dashboard'): ?>
+        <?php
+        /* نمودار ماهانه: آخرین ۶ ماه، بلندترین میله = ۱۰۰٪ */
+        $plot = array();
+        foreach ((array) $archStats['months'] as $m => $v) {
+            $plot[substr((string) $m, 5, 2)] = (int) $v;
+        }
+        $plot = array_slice($plot, -6, 6, true);
+        $maxPlot = $plot ? max($plot) : 0;
+        $topSellers = (array) $archStats['sellers'];
+        ?>
+
+        <div class="kpis">
+          <div class="kcard">
+            <div class="kl"><span>🧾</span> فاکتورهای بایگانی</div>
+            <div class="kv"><?= h(fk_fa_num((int) $archStats['count'])) ?></div>
+            <div class="kf">
+              <?php if ((int) $archStats['confirmed'] > 0): ?>
+                <b><?= h(fk_fa_num((int) $archStats['confirmed'])) ?></b> با اعتماد بالا
+              <?php else: ?>
+                هنوز فاکتوری ثبت نشده
+              <?php endif; ?>
+            </div>
+          </div>
+
+          <div class="kcard" style="--kc:rgba(45,212,191,.32)">
+            <div class="kl"><span>💰</span> جمع مبالغ</div>
+            <div class="kv" style="font-size:19px"><?= (int) $archStats['sum'] > 0 ? h(fk_fmt_amount((int) $archStats['sum'])) : '—' ?></div>
+            <div class="kf">میانگین هر فاکتور:
+              <?= (int) $archStats['avg_invoice'] > 0 ? h(fk_fmt_amount((int) $archStats['avg_invoice'])) : '—' ?>
+            </div>
+          </div>
+
+          <div class="kcard" style="--kc:rgba(129,140,248,.32)">
+            <div class="kl"><span>📦</span> اقلام ثبت‌شده</div>
+            <div class="kv"><?= h(fk_fa_num((int) $archStats['items'])) ?></div>
+            <div class="kf">جمع مالیات: <?= (int) $archStats['tax'] > 0 ? h(fk_fmt_amount((int) $archStats['tax'])) : '—' ?></div>
+          </div>
+
+          <div class="kcard" style="--kc:rgba(244,114,182,.28)">
+            <div class="kl"><span>🎯</span> میانگین اعتماد خوانش</div>
+            <div class="kv"><?= h(fk_fa_num((int) $archStats['avg_confidence'])) ?>٪</div>
+            <div class="kf">از ۱۰۰٪ — بالاتر یعنی اقلام مطمئن‌تر</div>
+          </div>
+        </div>
+
+        <?php if ((int) $archStats['count'] === 0): ?>
+          <div class="card">
+            <div class="blank">
+              <span class="ic">📄</span>
+              <b>هنوز فاکتوری بایگانی نشده</b>
+              یک فایل در «خوانش فاکتور» بفرستید، بعد دکمهٔ
+              <b>«ثبت در بایگانی»</b> را بزنید تا این‌جا آمار بسازد.
+              <div style="margin-top:16px">
+                <a href="?v=scan"><button class="primary" type="button">شروع خوانش فاکتور</button></a>
+              </div>
+            </div>
+          </div>
+        <?php endif; ?>
+
+        <div class="cols">
+          <div class="card">
+            <h2>📈 روند ماهانه <span class="pill ok">۶ ماه</span></h2>
+            <?php if ($plot): ?>
+              <div class="bars">
+                <?php foreach ($plot as $m => $v): ?>
+                  <div class="b" title="<?= h(fk_fmt_amount($v)) ?>">
+                    <em><?= $v > 0 ? h(fk_fa_num((int) round($v / 1000000))) . 'M' : '' ?></em>
+                    <i style="height:<?= $maxPlot > 0 ? max(3, (int) round($v / $maxPlot * 100)) : 3 ?>%"></i>
+                    <span><?= h(fk_fa_num((int) $m)) ?></span>
+                  </div>
+                <?php endforeach; ?>
+              </div>
+              <p class="hint">ارتفاع میله‌ها نسبت به بزرگ‌ترین ماه است؛ عدد بالای هر میله به میلیون تومان.</p>
+            <?php else: ?>
+              <p class="muted" style="margin:0">با ثبت اولین فاکتور، روند این‌جا شکل می‌گیرد.</p>
+            <?php endif; ?>
+          </div>
+
+          <div class="card">
+            <h2>🏪 بیشترین فروشنده</h2>
+            <?php if ($topSellers): ?>
+              <table style="width:100%">
+                <?php foreach ($topSellers as $name => $amount): ?>
+                  <tr>
+                    <td style="padding:7px 0;font-size:12.5px"><?= h((string) $name) ?></td>
+                    <td class="ltr" style="text-align:left;padding:7px 0;font-size:12px;color:var(--dim)">
+                      <?= h(fk_fmt_amount((int) $amount)) ?>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </table>
+            <?php else: ?>
+              <p class="muted" style="margin:0">نام فروشنده از فاکتورها خوانده می‌شود.</p>
+            <?php endif; ?>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>🕘 کارهای خوانش اخیر
+            <?php if ((int) $stats['count'] > (int) $stats['ok'] + (int) $stats['failed']): ?>
+              <span class="pill wait">در حال پردازش</span>
+            <?php endif; ?>
+          </h2>
+          <div class="stats">
+            <div class="stat"><b><?= h(fk_fa_num((int) $stats['count'])) ?></b><span>در این نشست</span></div>
+            <div class="stat"><b><?= h(fk_fa_num((int) $stats['ok'])) ?></b><span>موفق</span></div>
+            <div class="stat"><b><?= h(fk_fa_num((int) $stats['items'])) ?></b><span>قلم کالا</span></div>
+            <div class="stat"><b class="ltr" style="direction:ltr;text-align:right"><?= (int) $stats['total'] > 0 ? h(fk_fmt_amount((int) $stats['total'])) : '—' ?></b><span>جمع مبالغ</span></div>
+          </div>
+          <?php if ($recent): ?>
+            <div class="hlist" style="margin-top:12px">
+              <?php foreach (array_slice($recent, 0, 6) as $r): ?>
+                <div class="hitem">
+                  <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
+                    <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در جریان')) ?>
+                  </span>
+                  <span class="hname ltr"><?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?></span>
+                  <span class="hmeta">
+                    <?php if ($r['created_fa'] !== ''): ?><?= h($r['created_fa']) ?><?php endif; ?>
+                    <?php if ($r['items'] > 0): ?> · <?= h(fk_fa_num($r['items'])) ?> قلم<?php endif; ?>
+                  </span>
+                </div>
+              <?php endforeach; ?>
+            </div>
+            <p class="hint"><a href="?v=scan">رفتن به خوانش ←</a></p>
+          <?php else: ?>
+            <p class="muted" style="margin:12px 0 0">هنوز فایلی نفرستاده‌اید.</p>
+          <?php endif; ?>
+        </div>
+
+      <?php /* ══════════════ ۲) خوانش ══════════════ */ ?>
+      <?php elseif ($view === 'scan'): ?>
+        <div class="card">
+          <h2>📄 پردازش فایل</h2>
+          <form id="upload-form" autocomplete="off">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <label>فایل (عکس، PDF یا صوتی)</label>
+            <input type="file" name="document" id="doc" required
+                   accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
+            <div class="row" style="margin-top:10px">
+              <div>
+                <label>نوع فاکتور</label>
+                <select name="invoice_type" id="invoice_type">
+                  <option value="printed" selected>🖨 چاپی / تایپی — پیشنهادی</option>
+                  <option value="thermal">🧾 حرارتی (صندوق فروش)</option>
+                  <option value="handwritten">✍️ دست‌نویس</option>
+                  <option value="audio">🎙 صوتی (فاکتور گفتاری)</option>
+                  <option value="auto">🤖 تشخیص خودکار نوع و ستون‌ها</option>
+                </select>
+                <p class="muted" style="margin:6px 0 0;font-size:11px">
+                  «تشخیص خودکار» نوع فاکتور را از نشانه‌های متن می‌فهمد
+                  (فیش/کارتخوان، نویز دست‌نویس، بی‌سرستونی) و پارامترهای
+                  خوانش را همان‌جا عوض می‌کند. اگر نوع را می‌دانید، دستی
+                  انتخاب کنید — دقیق‌تر و سریع‌تر است.
+                </p>
+              </div>
+              <div>
+                <label>موتور خوانش</label>
+                <select name="engine" id="engine">
+                  <option value="cloud" selected>☁️ سرویس ابری — پیش‌فرض (چاپی و تایپی)</option>
+                  <option value="ai"<?= $aiKeySet ? '' : ' disabled' ?>>🤖 هوش مصنوعی — دست‌نویس و عکس سخت<?= $aiKeySet ? '' : ' (کلید ندارد)' ?></option>
+                </select>
+                <p class="muted" style="margin:6px 0 0;font-size:11px">
+                  <?php if ($aiKeySet): ?>
+                    اگر خروجی سرویس ابری خالی بود، خودکار موتور هوش مصنوعی هم امتحان می‌شود.
+                  <?php else: ?>
+                    برای فعال‌کردن موتور دوم، در «تنظیمات» یک کلید ثبت کنید.
+                  <?php endif; ?>
+                </p>
+              </div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <div>
+                <label>روش تبدیل</label>
+                <select name="method" id="method">
+                  <option value="4" selected>استخراج متن — سریع‌ترین و مناسب فاکتور</option>
+                  <option value="1">Word (فقط PDF متنی — کندتر)</option>
+                  <option value="2">Word با حفظ ساختار (فقط PDF)</option>
+                  <option value="3">Word — حالت سوم (فقط PDF)</option>
+                </select>
+              </div>
+              <div>
+                <label>قالب خروجی</label>
+                <select name="output" id="output">
+                  <option value="keeplayout" selected>متن + Word — پیشنهادی ⚡</option>
+                  <option value="txt">فقط متن — کمی سریع‌تر</option>
+                  <option value="txtraw">متن خام — سریع</option>
+                  <option value="txtrawjson">متن + مختصات (JSON) — کندترین</option>
+                </select>
+              </div>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
+              <input type="checkbox" name="delete_after" value="1" checked style="width:auto">
+              حذف فایل از سرور ابری پس از پردازش (توصیه می‌شود)
+            </label>
+            <div class="row" style="margin-top:12px">
+              <button class="primary" type="submit" id="go">ارسال و خوانش</button>
+              <button type="button" class="danger" id="stop" style="display:none">لغو پردازش</button>
+            </div>
+          </form>
+          <p class="muted">حداکثر حجم: <b class="ltr"><?= h($uploadMax) ?></b> ·
+            حداکثر POST: <b class="ltr"><?= h($postMax) ?></b> ·
+            پردازش در پس‌زمینه انجام می‌شود و صفحه قفل نمی‌شود.</p>
+
+          <div id="job" style="display:none;margin-top:16px">
+            <div class="job-row">
+              <span id="job-name" class="ltr" style="color:var(--dim)"></span>
+              <span id="job-state" class="pill wait">در صف</span>
+            </div>
+            <div class="progress" id="bar-wrap"><i id="bar"></i></div>
+            <p class="muted" id="job-msg" style="margin:0"></p>
+            <p class="muted" id="job-meta"></p>
+            <p class="muted" id="job-elapsed" style="margin:0;font-size:12px">
+              زمان سپری‌شده: <b class="ltr" id="job-clock">۰</b>
+            </p>
+            <div id="result" style="display:none">
+              <div class="kpi" id="kpi"></div>
+              <div class="textbar">
+                <span class="muted" id="textinfo" style="margin:0"></span>
+                <span class="sp"></span>
+                <button type="button" class="ghost" id="btn-copy">کپی متن</button>
+                <button type="button" class="ghost" id="btn-txt">دانلود متن (TXT)</button>
+                <button type="button" class="ghost" id="btn-doc">دانلود Word</button>
+                <button type="button" class="ghost danger" id="btn-del" style="display:none">حذف فایل‌ها</button>
+              </div>
+              <div id="understood" style="display:none;margin-top:14px">
+                <div class="ufhead">
+                  <strong>🧠 موتور فهم اقلام</strong>
+                  <span class="muted" id="uf-summary" style="margin:0"></span>
+                  <span class="sp"></span>
+                  <button type="button" class="ghost" id="btn-tab">نمای جدول</button>
+                  <button type="button" class="ghost" id="btn-cleantext" title="متن یکدست‌شده در کادر می‌آید">متن پاک‌شده</button>
+                </div>
+                <div id="uf-meta" class="uf-meta" style="display:none"></div>
+                <div id="uf-issues"></div>
+                <div id="uf-suggest" class="uf-suggest" style="display:none"></div>
+                <div id="uf-table-wrap">
+                  <table id="uf-table">
+                    <thead><tr>
+                      <th>#</th><th>شرح کالا / خدمت</th><th>تعداد</th><th>واحد</th>
+                      <th>قیمت واحد</th><th>مبلغ</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                    <tfoot></tfoot>
+                  </table>
+                </div>
+                <div class="ufhead" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+                  <strong>🗂 ثبت فاکتور</strong>
+                  <span class="muted" style="margin:0">متن و اقلام همین صفحه بایگانی می‌شوند</span>
+                  <span class="sp"></span>
+                  <button type="button" class="primary" id="btn-archive">ثبت در بایگانی</button>
+                </div>
+                <div id="archive-form" style="display:none;margin-top:10px">
+                  <div class="row">
+                    <div><label>شمارهٔ فاکتور</label><input type="text" id="iv-number" dir="ltr" placeholder="مثلاً ۱۲۳۴"></div>
+                    <div><label>تاریخ</label><input type="text" id="iv-date" placeholder="۱۴۰۴/۰۹/۱۶"></div>
+                  </div>
+                  <div class="row" style="margin-top:8px">
+                    <div><label>فروشنده</label><input type="text" id="iv-seller" placeholder="از متن خوانده می‌شود"></div>
+                    <div><label>خریدار</label><input type="text" id="iv-buyer"></div>
+                  </div>
+                  <div class="row" style="margin-top:8px">
+                    <div><label>جمع اقلام</label><input type="text" id="iv-subtotal" dir="ltr"></div>
+                    <div><label>مالیات</label><input type="text" id="iv-tax" dir="ltr"></div>
+                  </div>
+                  <div class="row" style="margin-top:8px">
+                    <div><label>مبلغ کل</label><input type="text" id="iv-total" dir="ltr"></div>
+                    <div><label>برچسب‌ها (با کاما)</label><input type="text" id="iv-tags" placeholder="خرید، آبان"></div>
+                  </div>
+                  <label style="margin-top:8px">یادداشت</label>
+                  <input type="text" id="iv-note" placeholder="اختیاری">
+                  <p class="muted" id="arch-save-msg" style="margin:8px 0 0"></p>
+                </div>
+              </div>
+              <textarea id="text" spellcheck="false" placeholder="متن خوانده‌شده این‌جا می‌آید…"></textarea>
+              <p class="muted" id="saved" style="display:none"></p>
+              <p class="muted" id="txthint" style="display:none">
+                متن را می‌توانید همین‌جا ویرایش کنید؛ برای بردن به اکسل/ورد، «کپی متن» را بزنید.
+              </p>
+            </div>
+            <div id="job-err" class="flash error" style="display:none;margin:12px 0 0"></div>
+          </div>
+        </div>
+
+        <?php if ($allJobs): ?>
+          <div class="card">
+            <h2>📊 تاریخچهٔ خوانش
+              <?php if ($stats['count'] > $stats['ok'] + $stats['failed']): ?>
+                <span class="pill wait">در حال پردازش</span>
+              <?php endif; ?>
+            </h2>
+            <div class="stats">
+              <div class="stat"><b><?= h(fk_fa_num((int) $stats['count'])) ?></b><span>فاکتور</span></div>
+              <div class="stat"><b><?= h(fk_fa_num((int) $stats['ok'])) ?></b><span>موفق</span></div>
+              <div class="stat"><b><?= h(fk_fa_num((int) $stats['items'])) ?></b><span>قلم کالا</span></div>
+              <div class="stat"><b class="ltr" style="direction:ltr;text-align:right"><?= $stats['total'] > 0 ? h(fk_fmt_amount((int) $stats['total'])) : '—' ?></b><span>جمع کل مبالغ</span></div>
+            </div>
+
+            <form class="hsearch" method="get" action="">
+              <input type="hidden" name="v" value="scan">
+              <input type="text" name="q" value="<?= h($historyQuery) ?>"
+                     placeholder="جستجو در نام فایل، متن و شمارهٔ فاکتور…" autocomplete="off">
+              <button type="submit" class="ghost">جستجو</button>
+              <?php if ($historyQuery !== ''): ?>
+                <button type="button" class="ghost" onclick="location.href='?v=scan'">پاک کردن</button>
+              <?php endif; ?>
+            </form>
+
+            <?php if (!$recent): ?>
+              <p class="hempty">فاکتوری با این عبارت پیدا نشد.</p>
+            <?php else: ?>
+              <div class="hlist">
+                <?php foreach ($recent as $r): ?>
+                  <div class="hitem">
+                    <span class="pill <?= $r['status'] === 'done' ? 'ok' : ($r['status'] === 'failed' ? 'bad' : 'wait') ?>">
+                      <?= h($r['status'] === 'done' ? 'آماده' : ($r['status'] === 'failed' ? 'خطا' : 'در جریان')) ?>
+                    </span>
+                    <span class="hname ltr" title="<?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>">
+                      <?= h($r['name'] !== '' ? $r['name'] : $r['id']) ?>
+                    </span>
+                    <span class="hmeta">
+                      <?php if ($r['created_fa'] !== ''): ?><?= h($r['created_fa']) ?><?php endif; ?>
+                      <?php if ($r['items'] > 0): ?> · <?= h(fk_fa_num($r['items'])) ?> قلم<?php endif; ?>
+                      <?php if ($r['total'] > 0): ?> · <span class="ltr"><?= h(fk_fmt_amount($r['total'])) ?></span><?php endif; ?>
+                    </span>
+                    <span class="hact">
+                      <button class="ghost" type="button" data-job="<?= h($r['id']) ?>">نمایش</button>
+                      <?php if ($r['has_text']): ?>
+                        <a href="?api=txt&amp;id=<?= h(urlencode($r['id'])) ?>" target="_blank"
+                           rel="noopener"><button class="ghost" type="button">متن</button></a>
+                      <?php endif; ?>
+                      <form method="post" action="" style="display:inline"
+                            onsubmit="return confirm('این فاکتور از تاریخچه حذف شود؟');">
+                        <input type="hidden" name="action" value="forget_job">
+                        <input type="hidden" name="id" value="<?= h($r['id']) ?>">
+                        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+                        <button class="ghost" type="submit" title="حذف">✕</button>
+                      </form>
+                    </span>
+                  </div>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+
+            <div class="hint">
+              <?php if (count($allJobs) > 0): ?>
+                <a href="?csv=1">⬇️ دانلود همه به‌صورت CSV (برای اکسل)</a> ·
+              <?php endif; ?>
+              <a href="?cleanup=1">پاک کردن کارهای قدیمی</a>
+            </div>
+          </div>
+        <?php endif; ?>
+
+      <?php /* ══════════════ ۳) بایگانی ══════════════ */ ?>
+      <?php elseif ($view === 'archive'): ?>
+        <div class="card">
+          <h2>🗂 بایگانی فاکتورها
+            <span class="pill <?= (int) $archStats['count'] > 0 ? 'ok' : 'wait' ?>">
+              <?= h(fk_fa_num((int) $archStats['count'])) ?> فاکتور
+            </span>
+          </h2>
+
+          <form class="toolbar" method="get" action="">
+            <input type="hidden" name="v" value="archive">
+            <input type="text" name="aq" value="<?= h($archiveQuery) ?>"
+                   placeholder="جست‌وجو در شماره، فروشنده، خریدار و اقلام…" autocomplete="off">
+            <select name="as" onchange="this.form.submit()">
+              <option value="new"<?= ($_GET['as'] ?? 'new') === 'new' ? ' selected' : '' ?>>جدیدترین</option>
+              <option value="old"<?= ($_GET['as'] ?? '') === 'old' ? ' selected' : '' ?>>قدیمی‌ترین</option>
+              <option value="amount"<?= ($_GET['as'] ?? '') === 'amount' ? ' selected' : '' ?>>بیشترین مبلغ</option>
+            </select>
+            <button class="ghost" type="submit">جست‌وجو</button>
+            <?php if ($archiveQuery !== ''): ?>
+              <a href="?v=archive"><button class="ghost" type="button">پاک کردن</button></a>
+            <?php endif; ?>
+          </form>
+
+          <?php if (!$archive): ?>
+            <div class="blank">
+              <span class="ic">🗂</span>
+              <b>بایگانی خالی است</b>
+              <?php if ($archiveQuery !== ''): ?>
+                برای «<?= h($archiveQuery) ?>» فاکتوری پیدا نشد.
+              <?php else: ?>
+                فاکتورها از صفحهٔ «خوانش» با دکمهٔ «ثبت در بایگانی» این‌جا ذخیره می‌شوند.
+              <?php endif; ?>
+              <div style="margin-top:16px"><a href="?v=scan"><button class="primary" type="button">خوانش یک فاکتور</button></a></div>
+            </div>
+          <?php else: ?>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>تاریخ</th>
+                    <th>شماره</th>
+                    <th>فروشنده</th>
+                    <th>اقلام</th>
+                    <th>جمع اقلام</th>
+                    <th>مالیات</th>
+                    <th>مبلغ کل</th>
+                    <th>اعتماد</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($archive as $inv): ?>
+                    <tr>
+                      <td style="font-size:11.5px;color:var(--dim);white-space:nowrap">
+                        <?= h(fk_fa_date((int) $inv['created_at'], false)) ?>
+                      </td>
+                      <td class="ltr" style="font-size:12px"><?= h((string) ($inv['number'] ?? '') ?: '—') ?></td>
+                      <td style="max-width:190px">
+                        <?= h((string) ($inv['seller_name'] ?? '') ?: '—') ?>
+                        <div class="fname"><?= h((string) ($inv['file_name'] ?? '')) ?></div>
+                      </td>
+                      <td class="num" style="text-align:center"><?= h(fk_fa_num(count((array) ($inv['items'] ?? array())))) ?></td>
+                      <td class="num"><?= h(fk_fmt_amount((int) ($inv['subtotal'] ?? 0))) ?></td>
+                      <td class="num"><?= h(fk_fmt_amount((int) ($inv['tax'] ?? 0))) ?></td>
+                      <td class="num" style="font-weight:700;color:var(--gold)"><?= h(fk_fmt_amount((int) ($inv['total'] ?? 0))) ?></td>
+                      <td>
+                        <span class="pill <?= (int) ($inv['confidence'] ?? 0) >= 80 ? 'ok' : ((int) ($inv['confidence'] ?? 0) >= 50 ? 'wait' : 'bad') ?>">
+                          <?= h(fk_fa_num((int) ($inv['confidence'] ?? 0))) ?>٪
+                        </span>
+                      </td>
+                      <td>
+                        <div class="acts">
+                          <form method="post" action="" style="display:inline"
+                                onsubmit="return confirm('این فاکتور از بایگانی حذف شود؟');">
+                            <input type="hidden" name="action" value="delete_invoice">
+                            <input type="hidden" name="id" value="<?= h((string) $inv['id']) ?>">
+                            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+                            <button class="ghost" type="submit" title="حذف">✕</button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              <a href="?archive=1">⬇️ دانلود کل بایگانی (CSV برای اکسل)</a>
+              · مبلغ‌ها به تومان و بدون اعشار ثبت می‌شوند.
+            </p>
+          <?php endif; ?>
+        </div>
+
+      <?php /* ══════════════ ۴) تنظیمات ══════════════ */ ?>
+      <?php else: ?>
+        <div class="card">
+          <h2>☁️ توکن سرویس ابری
+            <span class="pill <?= $tokenSet ? 'ok' : 'bad' ?>"><?= $tokenSet ? 'ثبت‌شده' : 'ثبت نشده' ?></span>
+          </h2>
+          <table>
+            <tr><td>درگاه</td><td><?= gateway_url() !== '' ? 'آماده (درون برنامه)' : 'نامعتبر' ?></td></tr>
+            <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= $tokenSet ? h($tokenMasked) : '—' ?></td></tr>
+          </table>
+          <form method="post" autocomplete="off" style="margin-top:12px">
+            <input type="hidden" name="action" value="save_token">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <label><?= $tokenSet ? 'جایگزینی توکن' : 'توکن را بچسبانید' ?></label>
+            <input type="text" name="token" dir="ltr" placeholder="توکن API" required>
+            <div class="row" style="margin-top:12px">
+              <button class="primary" type="submit">ذخیره توکن</button>
+              <button type="submit" name="action" value="test_credit" formnovalidate>تست اعتبار</button>
+              <?php if ($tokenSet): ?>
+                <button class="danger" type="submit" name="action" value="clear_token" formnovalidate>حذف توکن</button>
+              <?php endif; ?>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>🤖 موتور هوش مصنوعی (اختیاری)
+            <span class="pill <?= $aiKeySet ? 'ok' : 'wait' ?>"><?= $aiKeySet ? 'فعال' : 'خاموش' ?></span>
+          </h2>
+          <p class="muted" style="margin:0 0 10px">
+            موتور دوم برای فاکتور <b>دست‌نویس</b> و عکس‌های تار/کج که سرویس ابری ضعیف می‌خواند.
+            اگر خاموش بماند، همه‌چیز مثل قبل با سرویس ابری کار می‌کند.
+            کلید فقط روی همین سرور می‌ماند و هیچ‌وقت در صفحه دیده نمی‌شود.
+          </p>
+          <table>
+            <tr><td>وضعیت</td><td><?= $aiKeySet ? 'کلید ثبت شده' : 'بدون کلید' ?></td></tr>
+            <?php if ($aiKeySet): ?>
+              <tr><td>اثر انگشت مخفی</td><td class="ltr"><?= h($aiKeyMasked) ?></td></tr>
+            <?php endif; ?>
+            <tr><td>روش کار</td><td>تصویر مستقیم به مدل بینایی داده می‌شود (<span class="ltr">Base64</span>)</td></tr>
+          </table>
+          <form method="post" autocomplete="off" style="margin-top:12px">
+            <input type="hidden" name="action" value="save_ai_key">
+            <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+            <label><?= $aiKeySet ? 'جایگزینی کلید' : 'کلید موتور هوش مصنوعی را بچسبانید' ?></label>
+            <input type="text" name="ai_key" dir="ltr" placeholder="کلید" required>
+            <div class="row" style="margin-top:12px">
+              <button class="primary" type="submit">ذخیره کلید</button>
+              <?php if ($aiKeySet): ?>
+                <button class="danger" type="submit" name="action" value="clear_ai_key" formnovalidate>حذف کلید</button>
+              <?php endif; ?>
+            </div>
+          </form>
+        </div>
+
+        <div class="card" style="font-size:12px;color:var(--dim)">
+          <h2>🖥 سرور</h2>
+          <table>
+            <tr><td>PHP</td><td class="ltr"><?= h(PHP_VERSION) ?></td></tr>
+            <tr><td>curl</td><td><?= $hasCurl ? 'فعال' : 'غیرفعال' ?></td></tr>
+            <tr><td>حداکثر آپلود</td><td class="ltr"><?= h($uploadMax) ?></td></tr>
+            <tr><td>بایگانی</td><td class="ltr">fk-invoices/ — <?= h(fk_fa_num((int) $archStats['count'])) ?> فایل</td></tr>
+          </table>
+          <p class="muted">
+            <a href="check.php">بررسی سرور</a> ·
+            <a href="diag.php">عیب‌یابی سرویس ابری</a>
+          </p>
+        </div>
+      <?php endif; ?>
+    </div><!-- /content -->
+
+    <div style="padding:0 22px 24px;font-size:11px;color:#5d6779">
+      فاکتورخوان · توکن هرگز در صفحه نمایش داده نمی‌شود ·
+      <span class="ltr"><?= h(date('Y-m-d H:i')) ?></span>
+      <?php if (is_https()): ?>
+        <br>⚠️ با <b class="ltr">https</b> باز کرده‌اید؛ WAMP معمولاً SSL ندارد — با <b class="ltr">http://</b> باز کنید.
+      <?php endif; ?>
+    </div>
+  </div><!-- /main -->
+</div><!-- /shell -->
+<?php endif; ?>
 
 <?php if ($logged): ?>
 <script>
@@ -990,6 +1638,12 @@ if ($logged) {
   var lastStage = null;
   var tick = null;
   var startedAt = 0;
+
+  /* این اسکریپت در همهٔ نماها بار می‌شود، ولی عناصر آپلود فقط در نمای
+     «خوانش» هستند. بدون این گارد، در داشبورد/بایگانی خطای
+     «Cannot read properties of null» می‌داد و دکمه‌های دیگر (منو،
+     فاکتور جدید) از کار می‌افتادند. */
+  var hasUploader = !!(form && go && box);
 
   function setState(label, cls) {
     state.textContent = label;
@@ -1281,7 +1935,7 @@ if ($logged) {
       });
   }
 
-  form.addEventListener("submit", function (e) {
+  if (form) form.addEventListener("submit", function (e) {
     e.preventDefault();
     hideError();
     var fileInput = document.getElementById("doc");
@@ -1295,6 +1949,10 @@ if ($logged) {
     fd.append("method", document.getElementById("method").value);
     var engEl = document.getElementById("engine");
     fd.append("engine", engEl ? engEl.value : "cloud");
+    /* نوع فاکتور واقعاً به سرور می‌رود: «تشخیص خودکار» یعنی موتور خودش
+       نوع را از متن بفهمد و همان پارامترها را به کار ببرد. */
+    var typeEl = document.getElementById("invoice_type");
+    fd.append("invoice_type", typeEl ? typeEl.value : "printed");
     fd.append("output", document.getElementById("output").value);
     if (form.querySelector('[name="delete_after"]').checked) { fd.append("delete_after", "1"); }
 
@@ -1367,12 +2025,12 @@ if ($logged) {
     }
   });
 
-  btnTab.addEventListener("click", function () {
+  if (btnTab) btnTab.addEventListener("click", function () {
     ufMode = ufMode === "table" ? "text" : "table";
     paintUfMode();
   });
 
-  btnCopy.addEventListener("click", function () {
+  if (btnCopy) btnCopy.addEventListener("click", function () {
     var text = textBox.value || "";
     if (!text) { return; }
     var done = function () {
@@ -1389,17 +2047,17 @@ if ($logged) {
     }
   });
 
-  btnTxt.addEventListener("click", function () {
+  if (btnTxt) btnTxt.addEventListener("click", function () {
     var url = jobFileUrl("txt");
     if (url) { window.location.href = url; }
   });
 
-  btnDoc.addEventListener("click", function () {
+  if (btnDoc) btnDoc.addEventListener("click", function () {
     var url = jobFileUrl("doc");
     if (url) { window.location.href = url; }
   });
 
-  btnDel.addEventListener("click", function () {
+  if (btnDel) btnDel.addEventListener("click", function () {
     if (!lastJob || !lastJob.id) { return; }
     if (!window.confirm("فایل‌های ذخیره‌شده روی سرور حذف شوند؟ متن در همین صفحه می‌ماند.")) { return; }
     fetch("?api=deletefiles&id=" + encodeURIComponent(lastJob.id), { cache: "no-store" })
@@ -1412,7 +2070,7 @@ if ($logged) {
       .catch(function () {});
   });
 
-  stop.addEventListener("click", function () {
+  if (stop) stop.addEventListener("click", function () {
     if (!current) { return; }
     clearTimer();
     stop.disabled = true;
@@ -1441,6 +2099,97 @@ if ($logged) {
       poll(id);
       window.scrollTo({ top: box.offsetTop - 20, behavior: "smooth" });
     });
+  }
+
+  /* ════════ ثبت در بایگانی ════════
+     کاربری که فاکتور را خوانده نباید دوباره آن را دستی جایی وارد کند.
+     فرم ثبت با پیش‌پرشدن از خروجی موتور فهم باز می‌شود و همان اقلام
+     ویرایش‌شده در جدول را به بایگانی می‌فرستد. */
+  var btnArchive = document.getElementById("btn-archive");
+  var archForm = document.getElementById("archive-form");
+  var archMsg = document.getElementById("arch-save-msg");
+
+  function setVal(id, v) {
+    var el = document.getElementById(id);
+    if (el && (el.value === "" || el.value === undefined)) el.value = v || "";
+  }
+
+  if (btnArchive) {
+    btnArchive.addEventListener("click", function () {
+      if (archForm.style.display !== "none" && archForm.style.display !== "") {
+        // بار دوم: ارسال
+        if (!current) { archMsg.textContent = "اول یک فاکتور بخوانید."; return; }
+        var items = [];
+        var rows = ufTable ? ufTable.querySelectorAll("tbody tr") : [];
+        for (var i = 0; i < rows.length; i++) {
+          var inputs = rows[i].querySelectorAll("input");
+          if (!inputs.length) continue;
+          items.push({
+            description: inputs[0] ? inputs[0].value : "",
+            qty: inputs[1] ? inputs[1].value : 0,
+            unit: inputs[2] ? inputs[2].value : "",
+            unit_price: inputs[3] ? inputs[3].value : 0,
+            total: inputs[4] ? inputs[4].value : 0
+          });
+        }
+        var fd = new FormData();
+        fd.append("csrf", form.querySelector('[name="csrf"]').value);
+        fd.append("job_id", current);
+        fd.append("items", JSON.stringify(items));
+        var map = {
+          number: "iv-number", date: "iv-date", seller: "iv-seller", buyer: "iv-buyer",
+          subtotal: "iv-subtotal", tax: "iv-tax", total: "iv-total",
+          tags: "iv-tags", note: "iv-note"
+        };
+        for (var k in map) {
+          var el = document.getElementById(map[k]);
+          if (el) fd.append(k, el.value);
+        }
+        btnArchive.disabled = true;
+        archMsg.textContent = "در حال ذخیره…";
+        fetch("?api=invoice_save&_=" + Date.now(), {
+          method: "POST", body: fd, headers: { "Accept": "application/json" }
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          btnArchive.disabled = false;
+          if (!d || !d.ok) {
+            archMsg.textContent = (d && d.message) || "ذخیره نشد.";
+            return;
+          }
+          archMsg.innerHTML = 'ذخیره شد ✓ فاکتور با شناسهٔ <b class="ltr">'
+            + d.invoice.id.slice(0, 6) + "</b> — "
+            + '<a href="?v=archive">دیدن در بایگانی</a>';
+          btnArchive.textContent = "ثبت‌شده ✓";
+        }).catch(function () {
+          btnArchive.disabled = false;
+          archMsg.textContent = "ارتباط با سرور برقرار نشد.";
+        });
+        return;
+      }
+
+      // بار اول: فرم را با داده‌های خوانده‌شده پر کن
+      var u = lastJob && lastJob.understood ? lastJob.understood : null;
+      var meta = (u && u.meta) ? u.meta : {};
+      var totals = (u && u.totals) ? u.totals : {};
+      setVal("iv-number", meta.number);
+      setVal("iv-date", meta.date);
+      setVal("iv-seller", meta.seller);
+      setVal("iv-buyer", meta.buyer);
+      setVal("iv-subtotal", totals.subtotal);
+      setVal("iv-tax", totals.tax);
+      setVal("iv-total", totals.total);
+      if (u && u.type_label && meta.invoice_type === undefined) {
+        archMsg.textContent = "نوع تشخیص‌داده‌شده: " + u.type_label;
+      }
+      archForm.style.display = "block";
+      btnArchive.textContent = "ذخیرهٔ نهایی در بایگانی";
+    });
+  }
+
+  /* منوی موبایل */
+  var burger = document.getElementById("burger");
+  var sideEl = document.getElementById("side");
+  if (burger && sideEl) {
+    burger.addEventListener("click", function () { sideEl.classList.toggle("open"); });
   }
 
   // اگر صفحه بسته شد، تایمر پاک شود

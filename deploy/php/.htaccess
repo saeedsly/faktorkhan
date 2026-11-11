@@ -7,7 +7,7 @@
 Options -Indexes
 
 # ── فایل‌های حساس هرگز سرو نشوند ──────────────────────────────
-<FilesMatch "^(fk-config\.json|fk-lock\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md|fk-diag-sample\.png|\.bak)$">
+<FilesMatch "^(fk-config\.json|fk-owner|fk-lock\.json|config\.sample\.php|.*\.log|.*\.ini|.*\.sql|.*\.md|fk-diag-sample\.png|\.bak)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -23,6 +23,8 @@ Options -Indexes
     RewriteRule ^fk-uploads/ - [F,L]
     RewriteRule ^fk-sessions/ - [F,L]
     RewriteRule ^fk-jobs/ - [F,L]
+    RewriteRule ^fk-invoices/ - [F,L]
+    RewriteRule ^fk-owner$ - [F,L]
 </IfModule>
 
 # ── هدرهای امنیتی ─────────────────────────────────────────────

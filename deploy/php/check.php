@@ -47,7 +47,7 @@ $checks[] = row('دسترسی نوشتن در پوشهٔ برنامه', is_writa
 
 /* پوشه‌های کاری — برنامه خودش می‌سازد، ولی بهتر است از قبل بررسی شوند */
 foreach (array('fk-jobs' => 'کارهای در جریان', 'fk-uploads' => 'فایل‌های موقت آپلود',
-               'fk-sessions' => 'نشست‌ها') as $folder => $label) {
+               'fk-sessions' => 'نشست‌ها', 'fk-invoices' => 'بایگانی فاکتورها') as $folder => $label) {
     $path = __DIR__ . '/' . $folder;
     $ready = is_dir($path) ? is_writable($path) : is_writable(__DIR__);
     $checks[] = row('پوشهٔ ' . $label . ' (' . $folder . ')',

@@ -38,8 +38,13 @@ deploy/php/fk-sessions/
 deploy/php/fk-config.json
 deploy/php/fk-uploads/
 deploy/php/fk-jobs/
-deploy/php/fk-lock.json
+deploy/php/fk-invoices/
+deploy/php/fk-owner
+deploy/php/fk-owner.tmp
 deploy/php/fk-diag-sample.png
 
 # ── یادداشت‌های داخلی/تحلیل رقبا (عمومی نشود) ──
 notes/
+
+# ── ابزار تست (سیم‌لینک محلی) ──
+node_modules
