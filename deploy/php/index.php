@@ -1700,6 +1700,29 @@ $navTabs = array(
    * خروجی موتور فهم اقلام را نشان می‌دهد: جدول اقلام + جمع‌ها + اشکال‌ها.
    * ufMode = "table" یا "text" — با دکمهٔ «نمای جدول» عوض می‌شود.
    */
+  /* مقدار برای گذاشتن داخل value="…" */
+  function escAttr(v) {
+    if (v === null || v === undefined) { return ""; }
+    return String(v)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* جمع مبلغ ستون «مبلغ» را از خانه‌های جدول حساب می‌کند */
+  function recountItems() {
+    if (!ufTable) { return; }
+    var total = 0;
+    var rows = ufTable.querySelectorAll("tbody tr");
+    for (var i = 0; i < rows.length; i++) {
+      var el = rows[i].querySelector('input[data-i="total"]');
+      if (!el) { continue; }
+      var n = parseInt(String(el.value).replace(/[^0-9-]/g, ""), 10);
+      if (!isNaN(n)) { total += n; }
+    }
+    var sumEl = document.getElementById("uf-sum");
+    if (sumEl) { sumEl.textContent = money(total); }
+  }
+
   function paintUnderstood(u) {
     if (!u || !u.items || !u.items.length) {
       ufBox.style.display = "none";
@@ -1714,8 +1737,8 @@ $navTabs = array(
       (q ? '<span class="qbadge ' + gradeClass + '" title="' + escHtml(q.advice) + '">'
            + 'کیفیت ' + escHtml(q.grade) + "</span> " : "")
       + faNum(u.items.length) + " قلم · اعتماد "
-      + '<b class="ltr">' + faNum(conf) + "٪</b> · جمع "
-      + '<b class="ltr">' + money(sum) + "</b>";
+      + '<b class="ltr">' + faNum(conf) + "٪</b> · جمع اقلام "
+      + '<b class="ltr" id="uf-sum">' + money(sum) + "</b>";
 
     // فرادادهٔ سند: تاریخ، شماره، واحد پول، نرخ مالیات
     var meta = u.meta || {};
@@ -1732,19 +1755,32 @@ $navTabs = array(
       metaEl.style.display = metaBits.length ? "block" : "none";
     }
 
+    /*
+     * جدول اقلام قابل ویرایش است، نه فقط نمایشی.
+     *
+     * چرا: کاربر می‌داند فاکتورش چه می‌گوید. اگر موتور یک شرح را بد
+     * خوانده یا مبلغ را اشتباه گرفته، باید بتواند همین‌جا درستش کند و
+     * همان نسخهٔ درست‌شده بایگانی شود — نه اینکه مجبور باشد بعداً در
+     * اکسل اصلاح کند. وقتی دکمهٔ «ثبت در بایگانی» زده می‌شود، مقادیر
+     * همین خانه‌ها فرستاده می‌شوند.
+     */
     var rows = u.items.map(function (it, i) {
       var fixed = it.note ? ' title="' + escHtml(it.note) + '"' : "";
       return "<tr" + fixed + ">"
         + "<td>" + faNum(i + 1) + "</td>"
-        + '<td class="uf-desc">' + escHtml(it.description) + "</td>"
-        + '<td class="ltr">' + faNum(it.qty) + "</td>"
-        + "<td>" + escHtml(it.unit || "") + "</td>"
-        + '<td class="ltr">' + money(it.unit_price) + "</td>"
-        + '<td class="ltr">' + (it.original_total ? '<s class="uf-old">' + money(it.original_total) + "</s> " : "")
-        + money(it.total) + "</td>"
+        + '<td class="uf-desc"><input type="text" value="' + escAttr(it.description) + '"'
+        + ' data-i="desc" aria-label="شرح"></td>'
+        + '<td><input type="text" class="ltr" value="' + escAttr(it.qty) + '" data-i="qty" aria-label="تعداد"></td>'
+        + '<td><input type="text" value="' + escAttr(it.unit || "") + '" data-i="unit" aria-label="واحد"></td>'
+        + '<td><input type="text" class="ltr" value="' + escAttr(it.unit_price) + '" data-i="price" aria-label="قیمت واحد"></td>'
+        + '<td><input type="text" class="ltr" value="' + escAttr(it.total) + '" data-i="total" aria-label="مبلغ"></td>'
         + "</tr>";
     }).join("");
     ufTable.querySelector("tbody").innerHTML = rows;
+    /* جمع اقلام از خانه‌ها دوباره حساب می‌شود تا با ویرایش کاربر
+       هم‌خوان بماند (فقط نمایش؛ سرور هم دوباره جمع می‌زند). */
+    ufTable.querySelector("tbody").addEventListener("input", recountItems);
+    ufTable.querySelector("tbody").addEventListener("change", recountItems);
 
     var t = u.totals || {};
     var footRows = [];
@@ -2122,14 +2158,20 @@ $navTabs = array(
         var items = [];
         var rows = ufTable ? ufTable.querySelectorAll("tbody tr") : [];
         for (var i = 0; i < rows.length; i++) {
-          var inputs = rows[i].querySelectorAll("input");
-          if (!inputs.length) continue;
+          /* با data-i می‌خوانیم، نه با ترتیب: اگر بعداً ستونی جابه‌جا
+             شود، همین کد بی‌صدا عدد را در فیلد اشتباه نمی‌ریزد. */
+          var get = function (key) {
+            var el = rows[i].querySelector('input[data-i="' + key + '"]');
+            return el ? el.value : "";
+          };
+          var desc = get("desc");
+          if (!desc) { continue; }
           items.push({
-            description: inputs[0] ? inputs[0].value : "",
-            qty: inputs[1] ? inputs[1].value : 0,
-            unit: inputs[2] ? inputs[2].value : "",
-            unit_price: inputs[3] ? inputs[3].value : 0,
-            total: inputs[4] ? inputs[4].value : 0
+            description: desc,
+            qty: get("qty"),
+            unit: get("unit"),
+            unit_price: get("price"),
+            total: get("total")
           });
         }
         var fd = new FormData();

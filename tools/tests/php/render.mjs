@@ -133,6 +133,12 @@ ck("بدون خطای نحوی JS", jsOk, jsErr);
 ck("گارد فرم آپلود (hasUploader)", allJs.includes("hasUploader"));
 ck("فقط یک بار تعریف setVal", (allJs.match(/function setVal/g) || []).length === 1);
 ck("ثبت در بایگانی در JS", allJs.includes("invoice_save"));
+/* جدول اقلام باید قابل ویرایش باشد: کاربر باید بتواند شرح/تعداد/مبلغ را
+   درست کند و همان نسخه بایگانی شود، نه نسخهٔ خام موتور. */
+ck("جدول اقلام قابل ویرایش", /data-i="(desc|qty|unit|price|total)"/.test(allJs));
+ck("ستون‌ها با data-i خوانده می‌شوند", allJs.includes("data-i=") && allJs.includes("querySelector"));
+ck("بازمحاسبهٔ جمع پس از ویرایش", allJs.includes("recountItems") && allJs.includes("uf-sum"));
+ck("فرار از نقل‌قول در value", allJs.includes("escAttr"));
 
 console.log(fails === 0 ? "\n✓ همهٔ بررسی‌ها موفق" : `\n✗ ${fails} بررسی ناموفق`);
 process.exit(fails === 0 ? 0 : 1);
