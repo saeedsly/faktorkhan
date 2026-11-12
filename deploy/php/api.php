@@ -905,8 +905,87 @@ switch ($action) {
         api_out(api_understand(api_str_or_json('text'), api_str_or_json('invoice_type'), api_bool('autofix', true)));
 
     case 'invoice-understand-image':
-        api_require_user();
-        api_fail('پر کردن خودکار از روی عکس در این نسخه فقط با موتور ابری انجام می‌شود؛ فایل را در «خوانش» بفرستید.', 409);
+        /*
+         * همان understand_image پایتون: تصویر را مستقیم به هوش مصنوعی
+         * می‌دهد تا خودش اقلام را بفهمد.
+         *
+         * پیش از این، این اکشن فقط خطا برمی‌گرداند. ولی ai_read_image
+         * از قبل در lib.php بود (با پرامپت فارسی و نرمال‌سازی پاسخ)،
+         * پس کمبود واقعی نبود — فقط به آن وصل نشده بود.
+         *
+         * اگر هوش مصنوعی جواب نداد ولی متن OCR داشتیم، مثل پایتون به
+         * موتور قواعد برمی‌گردیم؛ کاربر دست‌خالی نمی‌ماند.
+         */
+        $user = api_require_user();
+        api_quota_guard($user);
+        $payload = api_json();
+        $jobId = trim((string) (api_input('job_id', '') ?: api_input('id', '')));
+        $imagePath = '';
+        $ocrText = '';
+
+        if ($jobId !== '') {
+            $job = api_owned_job($user, $jobId);
+            if (!$job) {
+                api_fail('کار خوانش پیدا نشد.', 404);
+            }
+            $imagePath = (string) ($job['local'] ?? '');
+            $ocrText = (string) ($job['text'] ?? '');
+        }
+        $given = trim((string) (api_input('path', '') ?: ''));
+        if ($given !== '' && is_file($given)) {
+            $imagePath = $given;
+        }
+        if ($imagePath === '' || !is_file($imagePath)) {
+            api_fail('مسیر تصویر یا شناسهٔ کار لازم است.', 400);
+        }
+
+        $aiKey = trim((string) (load_config()['ai_key'] ?? ''));
+        if ($aiKey === '') {
+            /* بدون کلید، همان کاری را بکن که با متن می‌شود کرد */
+            if (trim($ocrText) !== '') {
+                $rules = api_understand($ocrText, (string) (api_input('invoice_type', 'printed') ?: 'printed'), true);
+                $rules['fallback'] = 'کلید هوش مصنوعی ثبت نشده است؛ از متن کار استفاده شد.';
+                $rules['engine'] = 'rules';
+                api_out($rules);
+            }
+            api_fail('موتور هوش مصنوعی فعال نیست. کلید آن را در «پنل مدیریت → سرویس ابری» وارد کنید، '
+                . 'یا متن فاکتور را در کادر «خوانش» بچسبانید.', 409);
+        }
+
+        $mime = (string) (mime_for_ext(strtolower((string) pathinfo($imagePath, PATHINFO_EXTENSION))) ?: 'image/jpeg');
+        $ai = ai_read_image($imagePath, $mime, 'invoice');
+        if (!$ai['ok']) {
+            if (trim($ocrText) !== '') {
+                $rules = api_understand($ocrText, (string) (api_input('invoice_type', 'printed') ?: 'printed'), true);
+                $rules['fallback'] = (string) $ai['message'];
+                $rules['engine'] = 'rules';
+                api_out($rules);
+            }
+            api_fail((string) $ai['message'], 422);
+        }
+
+        $understood = api_understand((string) $ai['text'], (string) (api_input('invoice_type', 'printed') ?: 'printed'), true);
+        $understood['engine'] = 'ai';
+        $understood['raw_text'] = (string) $ai['text'];
+
+        /* اگر خواستند، نتیجه را روی فاکتور موجود هم بنشان */
+        $applyTo = (int) (api_input('apply_to', 0) ?: 0);
+        if ($applyTo > 0) {
+            $inv = fk_row('invoices', $applyTo);
+            if ($inv && (int) ($inv['user_id'] ?? 0) === (int) $user['id']) {
+                $parsed = (array) ($understood['parsed'] ?? array());
+                $upd = array(
+                    'seller_name' => (string) ($parsed['seller_name'] ?? $inv['seller_name']),
+                    'buyer_name' => (string) ($parsed['buyer_name'] ?? $inv['buyer_name']),
+                    'number' => (string) ($parsed['number'] ?? $inv['number']),
+                    'total' => (int) ($parsed['total'] ?? $inv['total']),
+                    'updated_at' => fk_now(),
+                );
+                fk_update('invoices', $applyTo, $upd);
+                $understood['applied_to'] = $applyTo;
+            }
+        }
+        api_out($understood);
 
     case 'invoice-fix-numbers':
         api_require_user();

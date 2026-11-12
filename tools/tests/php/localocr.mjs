@@ -179,6 +179,57 @@ console.log("\n۶) نگهبان ساختاری");
      calls.map((c) => c[1].trim()).join(" | "));
 }
 
+console.log("\n۷) زنجیرهٔ کامل: PDF → متن → فاکتور فهمیده‌شده");
+{
+  const pdf = makePdf([
+    "فروشگاه آفتاب", "شماره فاکتور: 88",
+    "کاغذ\t3\t200,000\t600,000", "جمع کل: 600,000",
+  ]);
+  const php = new PhpNode();
+  await new Promise((r) => php.addEventListener("ready", r));
+  let out = "";
+  php.addEventListener("output", (e) => { out += e.detail.join(""); });
+  await php.run('<?php @mkdir("/app",0777,true); @mkdir("/app/fk-uploads",0777,true);'
+    + ' @mkdir("/app/fk-jobs",0777,true); @mkdir("/app/fk-sessions",0777,true);'
+    + ' @mkdir("/app/fk-data",0777,true);');
+  for (const n of ["lib.php", "engine.php", "data.php", "store.php", "api_helpers.php", "library.php"]) {
+    php.writeFile("/app/" + n, patch(fs.readFileSync(path.join(SRC, n), "utf8")));
+  }
+  php.writeFile("/app/fk-uploads/inv.pdf", pdf);
+  await php.run(`<?php
+class FkExit extends Exception {}
+require "/app/lib.php"; require "/app/data.php"; require "/app/store.php";
+require "/app/api_helpers.php"; require "/app/library.php";
+$job = array('id'=>job_id(),'user_id'=>1,'status'=>'queued','stage'=>'queued','progress'=>0,
+ 'message'=>'','text'=>'','pages'=>0,'file_token'=>'','created_at'=>time(),'updated_at'=>time(),
+ 'download'=>'','saved'=>'','saved_bytes'=>0,'txt_file'=>'','charcount'=>0,'out_kind'=>'',
+ 'docx_rebuilt'=>false,'engine'=>'local','invoice_type'=>'printed','ai_tried'=>false,
+ 'error'=>'','attempts'=>0,'deadline'=>time()+1800,'method'=>4,'output'=>'txtrawjson',
+ 'language'=>'fa','name'=>'inv.pdf','delete_after'=>false,'source_link'=>'',
+ 'local'=>'/app/fk-uploads/inv.pdf','mime'=>'application/pdf','bytes'=>0);
+job_save($job);
+$job = job_tick($job, 20);
+$u = api_understand((string) $job['text'], 'printed', true);
+echo "@@J@@";
+echo json_encode(array(
+  'status' => $job['status'],
+  'number' => $u['parsed']['number'] ?? '',
+  'seller' => $u['parsed']['seller_name'] ?? '',
+  'items'  => (int) ($u['item_count'] ?? 0),
+  'sum'    => (int) ($u['items_sum'] ?? 0),
+  'total'  => (int) ($u['parsed']['total'] ?? 0),
+), JSON_UNESCAPED_UNICODE);
+`);
+  const i = out.lastIndexOf("@@J@@");
+  const j = JSON.parse(out.slice(i + 5).trim());
+  ck("کار done شد", j.status === "done", j.status);
+  ck("شمارهٔ فاکتور ۸۸", String(j.number) === "88", String(j.number));
+  ck("فروشنده «آفتاب»", j.seller === "آفتاب", j.seller);
+  ck("یک قلم", j.items === 1, String(j.items));
+  ck("جمع اقلام ۶۰۰٬۰۰۰", j.sum === 600000, String(j.sum));
+  ck("مبلغ کل ۶۰۰٬۰۰۰", j.total === 600000, String(j.total));
+}
+
 console.log("\n" + "═".repeat(64));
 console.log(fails === 0 ? `✓ همهٔ ${checks} بررسی موتور محلی موفق` : `✗ ${fails} از ${checks} بررسی ناموفق`);
 console.log("═".repeat(64));
