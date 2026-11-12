@@ -39,6 +39,8 @@ deploy/php/fk-config.json
 deploy/php/fk-uploads/
 deploy/php/fk-jobs/
 deploy/php/fk-invoices/
+deploy/php/fk-data/
+deploy/php/fk-data/*.tmp
 deploy/php/fk-owner
 deploy/php/fk-owner.tmp
 deploy/php/fk-diag-sample.png

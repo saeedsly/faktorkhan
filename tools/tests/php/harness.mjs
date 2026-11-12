@@ -8,7 +8,7 @@ const UB = s => Buffer.from(s, "base64").toString("utf8");
 const lib = fs.readFileSync(`${SRC}/lib.php`, "utf8");
 const engine = fs.readFileSync(`${SRC}/engine.php`, "utf8");
 const library = fs.readFileSync(`${SRC}/library.php`, "utf8");
-const idx = fs.readFileSync(`${SRC}/index.php`, "utf8").replace("declare(strict_types=1);", "");
+const idx = fs.readFileSync(`${SRC}/legacy.php`, "utf8").replace("declare(strict_types=1);", "");
 
 const STUBS = `<?php
 foreach (array('CURLOPT_URL'=>1,'CURLOPT_POST'=>2,'CURLOPT_POSTFIELDS'=>3,'CURLOPT_RETURNTRANSFER'=>4,'CURLOPT_TIMEOUT'=>5,

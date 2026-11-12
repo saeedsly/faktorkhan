@@ -11,7 +11,7 @@ const B = s => Buffer.from(s, "utf8").toString("base64");
 const lib = fs.readFileSync(`${SRC}/lib.php`, "utf8");
 const eng = fs.readFileSync(`${SRC}/engine.php`, "utf8");
 const library = fs.readFileSync(`${SRC}/library.php`, `utf8`);
-const idx = fs.readFileSync(`${SRC}/index.php`, "utf8").replace("declare(strict_types=1);", "");
+const idx = fs.readFileSync(`${SRC}/legacy.php`, "utf8").replace("declare(strict_types=1);", "");
 
 const now = Math.floor(Date.now() / 1000);
 const mkJob = (id, name, text, total, items) => JSON.stringify({

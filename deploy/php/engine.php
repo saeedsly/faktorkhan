@@ -724,6 +724,32 @@ if (!function_exists('fk_understand')) {
 
         $confidence = fk_confidence($items, $issues, $map, $text);
         $res = fk_understand_result($items, $totals, $issues, $confidence, $text);
+
+        /* سرصفحه: شماره، تاریخ، فروشنده/خریدار.
+           این بخش قبلاً کلاً غایب بود و رابط برای هر فاکتور تازه،
+           «شماره» و «فروشنده» خالی نشان می‌داد. حالا با همان
+           fk_detect_meta (که وجود داشت ولی صدا زده نمی‌شد) پر می‌شود. */
+        $meta = fk_detect_meta($text, $totals);
+        list($sellerName, $sellerTax) = fk_find_party($text, 'seller');
+        if ($sellerName === '') {
+            $sellerName = fk_guess_seller_first_line($text);
+        }
+        list($buyerName, $buyerTax) = fk_find_party($text, 'buyer');
+        $res['meta'] = array(
+            'number' => (string) ($meta['number'] ?? ''),
+            'date' => (string) ($meta['date'] ?? ''),
+            'date_type' => (string) ($meta['date_type'] ?? ''),
+            'dates' => (array) ($meta['dates'] ?? array()),
+            'due' => isset($meta['dates'][1]['value']) ? (string) $meta['dates'][1]['value'] : '',
+            'seller' => $sellerName,
+            'seller_tax_id' => $sellerTax,
+            'buyer' => $buyerName,
+            'buyer_tax_id' => $buyerTax,
+            'type' => $type,
+            'type_label' => (string) $typeOpts['label'],
+            'currency' => $meta['currency'] ?? array(),
+            'tax_rate' => (int) ($meta['tax_rate'] ?? 0),
+        );
         $res['header'] = $hdr['header'];
         $res['column_types'] = $columnTypes;
         $res['mapping'] = $map;
@@ -852,6 +878,70 @@ if (!function_exists('fk_understand')) {
             'جعبه', 'کیسه', 'قلم', 'سری', 'عدد', 'تن');
         foreach ($units as $u) {
             if (fk_pos($low, $u) !== false) return $u;
+        }
+        return '';
+    }
+
+    /**
+     * نام و شناسهٔ ملی «فروشنده» یا «خریدار» را از سرصفحهٔ فاکتور می‌خواند.
+     *
+     * همان الگوریتم parser.py: اول برچسب را پیدا کن، بعد مقداری که تا
+     * تب/دو نقطه/لوله ادامه دارد. تمیزکاری لازم است چون روی فاکتورهای
+     * واقعی بعد از نام، آدرس یا تلفن هم می‌آید.
+     */
+    function fk_find_party(string $text, string $kind): array
+    {
+        if ($kind === 'seller') {
+            $nameLabels = array('فروشنده', 'فروشگاه', 'نام\s*شرکت', 'مؤسسه', 'عرضه\s*کننده', 'seller', 'vendor', 'from');
+            $taxLabels = array('شناسه\s*ملی\s*(?:فروشنده)?', 'کد\s*اقتصادی\s*(?:فروشنده)?', 'شماره\s*ثبت');
+        } else {
+            $nameLabels = array('خریدار', 'مشتری', 'نام\s*خریدار', 'buyer', 'customer', 'bill\s*to', 'to');
+            $taxLabels = array('شناسه\s*ملی\s*(?:خریدار)?', 'کد\s*اقتصادی\s*(?:خریدار)?', 'کد\s*ملی');
+        }
+        $name = '';
+        $taxId = '';
+        foreach ($nameLabels as $label) {
+            if (!preg_match('/' . $label . '\s*[:：\-]?\s*([^\t\n:：|]{2,60})/iu', $text, $m)) {
+                continue;
+            }
+            $candidate = str_replace("\t", ' ', $m[1]);
+            $candidate = trim($candidate, " :-|");
+            $candidate = preg_replace('/(شناسه|کد|تلفن|فکس|آدرس|شماره).*$/u', '', $candidate) ?? $candidate;
+            $candidate = preg_replace('/^(نام|شرکت|آقای|خانم)\s+/u', '', $candidate) ?? $candidate;
+            $candidate = trim($candidate, " :-|");
+            if (fk_len($candidate) >= 2 && !preg_match('/^[\d\s,]+$/u', $candidate)) {
+                $name = fk_sub($candidate, 0, 120);
+                break;
+            }
+        }
+        foreach ($taxLabels as $label) {
+            if (preg_match('/' . $label . '\s*[:：\-]?\s*(\d[\d\-]{5,20})/u', $text, $m)) {
+                $taxId = trim($m[1]);
+                break;
+            }
+        }
+        return array($name, $taxId);
+    }
+
+    /**
+     * اگر هیچ برچسبی پیدا نشد، سطر اولی که «شبیه نام کسب‌وکار» است را
+     * فروشنده بگیر — مثل «فروشگاه لوازم اداری آفتاب» در بالای فاکتور.
+     */
+    function fk_guess_seller_first_line(string $text): string
+    {
+        $skip = '/(فاکتور|invoice|شماره|تاریخ|خریدار|مشتری|تلفن|فکس|آدرس|جمع|مبلغ|شناسه|کد)/iu';
+        $head = '/(شرح|تعداد|قیمت|مبلغ|ردیف|description|qty|price)/iu';
+        $lines = preg_split('/\n/u', $text) ?: array();
+        foreach (array_slice($lines, 0, 6) as $line) {
+            $line = trim($line);
+            $len = fk_len($line);
+            if ($len < 3 || $len > 90) {
+                continue;
+            }
+            if (preg_match($skip, $line) || preg_match('/^[\d\s,.\-\/]+$/u', $line) || preg_match($head, $line)) {
+                continue;
+            }
+            return $line;
         }
         return '';
     }
@@ -1124,7 +1214,13 @@ if (!function_exists('fk_clean_for_reading')) {
         $t = fk_drop_noise($t);
         $t = fk_drop_running_heads($t);
         $t = fk_break_long_lines($t);
-        $t = fk_join_wrapped($t);
+        /* fk_join_wrapped این‌جا عمداً صدا زده نمی‌شود.
+           باگ واقعی: این تابع سطر «شرح تعداد قیمت مبلغ» را که هیچ عددی
+           ندارد، به سطر قبلی («تاریخ: ...») می‌چسباند و در نتیجه سرستون
+           از بین می‌رفت و ستون‌ها بی‌نام می‌شدند؛ بعد هم هیچ قلمی خوانده
+           نمی‌شد. همان‌طور که نسخهٔ پایتون هم فقط برای فاکتور دست‌نویس و
+           فیش حرارتی این کار را می‌کند، پیوند سطرهای شکسته در
+           fk_understand و بعد از تعیین نوع فاکتور انجام می‌شود. */
         $t = fk_dedupe_lines($t);
         $t = fk_tidy_punctuation($t);
         // سطرهای خالی پشت‌سرهم → یکی

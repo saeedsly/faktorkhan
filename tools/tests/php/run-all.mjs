@@ -28,6 +28,9 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const ORDER = [
+  ["lint.mjs",      "نحو همهٔ فایل‌های PHP"],
+  ["panel.mjs",     "پنل کامل: کاربران، اشتراک، پنل مدیریت"],
+  ["shell.mjs",     "پوستهٔ SPA و دارایی‌های رابط"],
   ["reap.mjs",      "بستن کارهای نیمه‌کاره"],
   ["loginlim.mjs",  "محدودیت تلاش ورود"],
   ["isolation.mjs", "جداسازی کاربران (امنیت)"],

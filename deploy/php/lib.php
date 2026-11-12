@@ -164,17 +164,35 @@ function start_session(): void
             @session_save_path($tmp);
         }
     }
+    /*
+     * نام نشست *قبل* از هر خروجی تنظیم شود.
+     *
+     * باگی که یک بار کل ورود را روی XAMPP از کار انداخت: اگر حتی یک
+     * بایت خروجی (حتی یک خط خالی بعد از `?>` در یک فایل includeشده)
+     * ارسال شده باشد، `session_name()` و `session_start()` با هشدار
+     * «headers already sent» رد می‌شوند. نتیجه: کاربر وارد می‌شود،
+     * صفحهٔ بعد او را ناشناس می‌بیند.
+     *
+     * راه‌حل: هر خروجیِ معلق را با ob_start بفشاریم و نام نشست را
+     * پیش از باز کردن بافر تنظیم کنیم — این‌طور حتی اگر فایلی خط جدید
+     * اضافه فرستاده باشد، نشست سالم بالا می‌آید.
+     */
+    if (ob_get_level() === 0 && (PHP_SAPI === 'apache2handler' || PHP_SAPI === 'fpm-fcgi' || PHP_SAPI === 'cli-server' || PHP_SAPI === 'litespeed')) {
+        @ob_start();
+    }
+    if (session_name() !== 'fksid') {
+        @session_name('fksid');
+    }
     $cookieOk = false;
-    if (PHP_VERSION_ID >= 70300) {
+    if (PHP_VERSION_ID >= 70300 && session_status() === PHP_SESSION_NONE) {
         $cookieOk = @session_set_cookie_params(array(
             'lifetime' => 0, 'path' => '/', 'httponly' => true,
             'samesite' => 'Lax', 'secure' => is_https(),
         ));
     }
-    if (!$cookieOk) {
+    if (!$cookieOk && session_status() === PHP_SESSION_NONE) {
         @session_set_cookie_params(0, '/; samesite=Lax', '', is_https(), true);
     }
-    session_name('fksid');
     @session_start();
 }
 

@@ -17,6 +17,16 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
+# ── پوشهٔ رابط: فقط فایل‌های خود رابط ────────────────────────
+# web/ خروجی ساخته‌شده از frontend/ است: index.html، app.js، app.css و assets.
+# اگر روزی فایل دیگری آن‌جا افتاد (مثلاً فایل پشتیبان یا یادداشت)، سرو نشود.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} ^/web/
+    RewriteCond %{REQUEST_URI} !^/web/(index\.html|app\.js|app\.css|assets/.*\.(css|js|woff2?|ttf|svg|png|jpg|jpeg|webp|ico))$ [NC]
+    RewriteRule ^web/ - [F,L]
+</IfModule>
+
 # ── پوشهٔ آپلود: فقط از طریق PHP قابل خواندن باشد ─────────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
@@ -30,7 +40,9 @@ Options -Indexes
 # ── هدرهای امنیتی ─────────────────────────────────────────────
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
-    Header always set X-Frame-Options "DENY"
+    # SAMEORIGIN نه DENY: پنل گاهی داخل قاب (iframe) پیش‌نمایش باز می‌شود.
+    # DENY قاب را سفید می‌کرد بدون هیچ پیام خطایی.
+    Header always set X-Frame-Options "SAMEORIGIN"
     Header always set Referrer-Policy "no-referrer"
     Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
     # Content-Security-Policy عمداً تنظیم نشده: استایل صفحه به‌صورت درون‌خطی است و
