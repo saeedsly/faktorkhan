@@ -107,10 +107,41 @@ echo ob_get_clean();
   ck("بدون <form action=\"?action=login\" (نشانهٔ legacy)", !out.includes('action="?action=login'));
   ck("متای موتور PHP", /<meta name="fk-engine" content="php">/.test(out));
   ck("متای نسخه", /<meta name="fk-version" content="[^"]+">/.test(out));
-  ck("کش‌شکن روی app.js", /app\.js\?v=\d+/.test(out));
-  ck("کش‌شکن روی app.css", /app\.css\?v=\d+/.test(out));
+  ck("کش‌شکن روی app.js", /app\.js\?v=[0-9a-f]+/.test(out));
+  ck("کش‌شکن روی app.css", /app\.css\?v=[0-9a-f]+/.test(out));
   ck("متای موتور قبل از </head>",
      out.indexOf('name="fk-engine"') < out.indexOf("</head>"));
+
+  /* ── رگرسیون: هر داراییِ HTML باید واقعاً سرو شود ──
+     باگی که کاربر دید: پوسته از / سرو می‌شد ولی به «./app.css» اشاره
+     می‌کرد، در حالی که فایل در web/ بود. نتیجه: ۴۰۴، صفحهٔ بی‌استایل،
+     و هیچ خطای جاوااسکریپتی. هیچ آزمونی این را نمی‌گرفت چون همه فقط
+     وجود فایل را می‌سنجیدند، نه آدرسِ داخل HTML را. */
+  const refs = [...out.matchAll(/(?:href|src)="(\.\/[^"?#]+)/g)].map((m) => m[1]);
+  const cssJsRefs = refs.filter((r) => /\.(css|js|svg)$/.test(r));
+  ck("HTML حداقل یک ارجاع دارایی دارد", cssJsRefs.length >= 2, `${cssJsRefs.length} مورد`);
+  ck("ارجاع CSS/JS به web/ اشاره می‌کند",
+     cssJsRefs.every((r) => r.startsWith("./web/")),
+     cssJsRefs.filter((r) => !r.startsWith("./web/")).join(", ") || "همه درست");
+
+  /* بازسازی مسیر واقعی: /  →  <ref>  →  فایل روی دیسک */
+  for (const r of cssJsRefs) {
+    const rel = r.replace(/^\.\//, "");
+    const onDisk = path.join(SRC, rel);
+    ck(`«${r}» به فایل موجود اشاره می‌کند`, fs.existsSync(onDisk),
+       fs.existsSync(onDisk) ? `${Math.round(fs.statSync(onDisk).size / 1024)} KB` : "فایل نیست!");
+  }
+
+  /* فونت‌ها: نسبت به محل CSS حل می‌شوند، نه نسبت به ریشه */
+  const cssRef = cssJsRefs.find((r) => r.endsWith(".css"));
+  if (cssRef) {
+    const cssDir = path.dirname(path.join(SRC, cssRef.replace(/^\.\//, "")));
+    const cssText = fs.readFileSync(path.join(SRC, cssRef.replace(/^\.\//, "")), "utf8");
+    const fontUrls = [...cssText.matchAll(/url\((\.[^)]+)\)/g)].map((m) => m[1]);
+    const missing = fontUrls.filter((u) => !fs.existsSync(path.join(cssDir, u)));
+    ck("همهٔ فونت‌های CSS در کنار CSS پیدا می‌شوند", missing.length === 0,
+       missing.length ? missing.join(", ") : `${fontUrls.length} مورد`);
+  }
 }
 
 console.log("\n۶) مسیر بازگشت به رابط قدیمی");

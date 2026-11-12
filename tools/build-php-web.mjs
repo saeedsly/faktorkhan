@@ -190,12 +190,73 @@ function patchPaths(js) {
   /* ۳) خروجی فایل: downloadAuth از fetch استفاده می‌کند، پس مسیر هم نسبی */
   js = js.replace('exportUrl: (format, params) => `./api.php?action=invoice-export', 'exportUrl: (format, params) => `./api.php?action=invoice-export');
 
+  /* ۳.۵) دارایی‌ها و سرویس‌ورکر.
+     رابط نسخهٔ پایتون روی ریشهٔ دامنه سرو می‌شد، پس مسیرها را مطلق
+     می‌نوشت: /assets/fonts/… و /sw.js. نسخهٔ PHP در زیرپوشه سرو
+     می‌شود (http://localhost/faktorkhan/)، و در آن حالت /assets/ به
+     ریشهٔ دامنه اشاره می‌کند، نه به پوشهٔ برنامه — یعنی ۴۰۴ و فونت
+     پیش‌فرض مرورگر. این باگ یک‌بار کل استایل را از بین برد.
+     حالا همهٔ این مسیرها نسبی می‌شوند.
+
+     سرویس‌ورکر هم حذف می‌شود: روی هاست مشترک، کش آن باعث می‌شود
+     کاربر بعد از آپدیت همچنان نسخهٔ قدیمی را ببیند و هیچ راه ساده‌ای
+     برای پاک‌کردنش نداشته باشد. */
+  js = js.replace(/\/assets\//g, "./assets/");
+
+  /* ۳.۶) پنجرهٔ چاپ.
+     چاپ با window.open("") یک سند خالی می‌سازد و document.write
+     می‌کند. در آن سند، مسیر نسبی «./assets/…» به پوشهٔ خودِ صفحه
+     حل می‌شود، نه به web/، پس فونت چاپ ۴۰۴ می‌شد و فاکتور با فونت
+     پیش‌فرض چاپ می‌شد. یک پایهٔ مطلق از document.baseURI حساب
+     می‌کنیم: اگر صفحه در /web/ باشد همان، وگرنه /web/ کنارش. */
+  js = js.replace(
+    "url('./assets/fonts/Vazirmatn-Regular.woff2')",
+    "url('${FK_ASSET_BASE}assets/fonts/Vazirmatn-Regular.woff2')"
+  );
+  js = js.replace(
+    "url('./assets/fonts/Vazirmatn-Bold.woff2')",
+    "url('${FK_ASSET_BASE}assets/fonts/Vazirmatn-Bold.woff2')"
+  );
+
+  /* بلوک کامل سرویس‌ورکر حذف می‌شود (نه فقط آدرسش). با «false» کردن
+     شرط، کد مرده می‌ماند و بعداً یکی آن را برمی‌گرداند.
+
+     چرا برش با indexOf و نه regex: بلوک سه سطح آکولاد تو در تو دارد و
+     regex غیرحریص در اولین «}» می‌ایستد — نتیجه‌اش یک پرانتز آویزان
+     بود که کل app.js را با SyntaxError از کار می‌انداخت (و صفحه
+     سفید می‌شد). */
+  const swStart = js.indexOf("    /* نسخه آفلاین */");
+  const swEndMarker = "}).catch(() => {});\n    }\n";
+  if (swStart === -1) {
+    console.error("✗ شروع بلوک سرویس‌ورکر پیدا نشد — build-php-web.mjs به‌روز شود");
+    process.exit(1);
+  }
+  const swEnd = js.indexOf(swEndMarker, swStart);
+  if (swEnd === -1) {
+    console.error("✗ پایان بلوک سرویس‌ورکر پیدا نشد — build-php-web.mjs به‌روز شود");
+    process.exit(1);
+  }
+  js = js.slice(0, swStart)
+     + "    /* سرویس‌ورکر در نسخهٔ PHP وجود ندارد: کش کهنه، کاربر را روی نسخهٔ قدیمی نگه می‌داشت */\n"
+     + js.slice(swEnd + swEndMarker.length);
+
   return js;
 }
 
+/* پایهٔ دارایی‌ها برای اسنادی که با document.write ساخته می‌شوند
+   (چاپ فاکتور). عمداً پیش از بسته تعریف می‌شود تا همهٔ فایل‌ها ببینندش. */
+const ASSET_BASE_PREAMBLE = `/* ساخته‌شده با tools/build-php-web.mjs — دستی ویرایش نکنید */
+const FK_ASSET_BASE = (() => {
+  try {
+    const dir = document.baseURI.replace(/[^/]*$/, "");
+    return /\\/web\\/$/.test(dir) ? dir : dir + "web/";
+  } catch { return "./web/"; }
+})();
+`;
+
 function buildApi() {
   const bundle = JS_ORDER.map((f) => read(path.join(SRC, "assets/js", f))).join("\n\n");
-  return `/* ساخته‌شده با tools/build-php-web.mjs — دستی ویرایش نکنید */\n` + patchPaths(bundle);
+  return ASSET_BASE_PREAMBLE + patchPaths(bundle);
 }
 
 /* ── ۲) CSS: مسیر فونت‌ها نسبی می‌شود و به assets/fonts اشاره می‌کند ── */
@@ -240,9 +301,33 @@ for (const f of ["index.html", "app.css", "app.js"]) {
 }
 const fonts = fs.readdirSync(path.join(OUT, "assets/fonts"));
 console.log(`  fonts        ${fonts.length} فایل`);
-const leftover = fs.readFileSync(path.join(OUT, "app.js"), "utf8").match(/\/api\//g);
+const bundleJs = fs.readFileSync(path.join(OUT, "app.js"), "utf8");
+const leftover = bundleJs.match(/\/api\//g);
 if (leftover) {
   console.error(`✗ ${leftover.length} مسیر /api/ باقی مانده — باید همه به api.php تبدیل شوند`);
   process.exit(1);
 }
 console.log("  ✓ هیچ مسیر /api/ باقی نمانده");
+
+/* ── نگهبان مسیر مطلق ──
+   برنامه در زیرپوشه سرو می‌شود؛ هر مسیر مطلقی (که به ریشهٔ دامنه
+   اشاره می‌کند نه به پوشهٔ برنامه) یعنی فایل پیدا نمی‌شود و صفحه
+   بی‌استایل می‌ماند. این دقیقاً همان باگی بود که کاربر دید. */
+const absInJs = bundleJs.match(/["'`]\/(?:assets|sw\.js|manifest[^"'`]*)/g);
+if (absInJs) {
+  console.error(`✗ ${absInJs.length} مسیر مطلق در app.js: ${[...new Set(absInJs)].join(", ")}`);
+  console.error("  این مسیرها در زیرپوشه (http://localhost/faktorkhan/) ۴۰۴ می‌شوند.");
+  process.exit(1);
+}
+const absInHtml = fs.readFileSync(path.join(OUT, "index.html"), "utf8")
+  .match(/(?:src|href)="\/(?:assets|sw\.js|manifest)/g);
+if (absInHtml) {
+  console.error(`✗ ${absInHtml.length} مسیر مطلق در index.html: ${[...new Set(absInHtml)].join(", ")}`);
+  process.exit(1);
+}
+const absInCss = fs.readFileSync(path.join(OUT, "app.css"), "utf8").match(/url\(\/(?!\/)/g);
+if (absInCss) {
+  console.error(`✗ ${absInCss.length} مسیر مطلق در app.css`);
+  process.exit(1);
+}
+console.log("  ✓ هیچ مسیر مطلق دارایی باقی نمانده (زیرپوشه‌safe)");

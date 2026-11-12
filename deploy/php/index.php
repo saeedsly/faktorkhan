@@ -45,11 +45,52 @@ header('Cache-Control: no-store, must-revalidate');
 /* نسخهٔ فایل‌ها را در نام می‌آوریم تا مرورگر پس از آپدیت، نسخهٔ
    قدیمیِ کش‌شده را نشان ندهد. این همان باگ «بعد از آپدیت صفحه سفید/قدیمی
    است» است که یک‌بار خیلی وقت گرفت. */
-$assetVersion = (string) @filemtime(__DIR__ . '/web/app.js') ?: '1';
+/* ── نسخهٔ دارایی ──
+   اگر فایل را عوض کنید اما ?v همان بماند، مرورگر نسخهٔ کش‌شده را
+   نشان می‌دهد و کاربر می‌گوید «هنوز خراب است». پس نسخه باید با تغییر
+   محتوا عوض شود.
+
+   ترتیب انتخاب:
+     ۱) زمان تغییر فایل‌ها — سریع و دقیق. اگر app.js و app.css هر دو
+        filemtime بدهند، همین کافی است.
+     ۲) اثرانگشت محتوا — برای هاست‌هایی (و شبیه‌ساز php-wasm) که
+        filemtime عدد نمی‌دهد. گران است، پس یک بار محاسبه و در
+        fk-data/.asset-version ذخیره می‌شود؛ کلید کش شامل حجم
+        فایل‌هاست تا بازسازی فایل، کلید را عوض کند. */
+$assetVersion = '';
+$jsFile = __DIR__ . '/web/app.js';
+$cssFile = __DIR__ . '/web/app.css';
+$jsTime = @filemtime($jsFile);
+$cssTime = @filemtime($cssFile);
+
+if ($jsTime && $cssTime) {
+    $assetVersion = substr(md5($jsTime . '|' . $cssTime), 0, 8);
+} else {
+    /* کلید کش: حجم فایل‌ها؛ اگر فایل بازسازی شود حجم عوض می‌شود و
+       اثرانگشت تازه محاسبه می‌شود. */
+    $key = (int) @filesize($jsFile) . 'x' . (int) @filesize($cssFile);
+    $stampFile = __DIR__ . '/fk-data/.asset-version';
+    $cached = array();
+    if (is_file($stampFile)) {
+        $cached = (array) @json_decode((string) @file_get_contents($stampFile), true);
+    }
+    if (isset($cached['key'], $cached['v']) && $cached['key'] === $key && is_string($cached['v'])) {
+        $assetVersion = $cached['v'];
+    } else {
+        $assetVersion = substr(md5($key . '|' . (string) @hash_file('md5', $jsFile) . '|' . (string) @hash_file('md5', $cssFile)), 0, 8);
+        if (is_dir(__DIR__ . '/fk-data') || @mkdir(__DIR__ . '/fk-data', 0775, true)) {
+            @file_put_contents($stampFile, json_encode(array('key' => $key, 'v' => $assetVersion)), LOCK_EX);
+        }
+    }
+}
+if ($assetVersion === '') {
+    $assetVersion = '1';
+}
 
 $html = (string) file_get_contents($webIndex);
-$html = str_replace('./app.css', './app.css?v=' . $assetVersion, $html);
-$html = str_replace('./app.js', './app.js?v=' . $assetVersion, $html);
+$html = str_replace('href="./app.css"', 'href="./web/app.css?v=' . $assetVersion . '"', $html);
+$html = str_replace('src="./app.js"', 'src="./web/app.js?v=' . $assetVersion . '"', $html);
+$html = str_replace('href="./assets/', 'href="./web/assets/', $html);
 
 /* شناسهٔ نصب در تگ‌های meta: برای پشتیبانی و «کدام نسخه روی سرور است» */
 $html = str_replace(

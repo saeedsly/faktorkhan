@@ -1,4 +1,10 @@
 /* ساخته‌شده با tools/build-php-web.mjs — دستی ویرایش نکنید */
+const FK_ASSET_BASE = (() => {
+  try {
+    const dir = document.baseURI.replace(/[^/]*$/, "");
+    return /\/web\/$/.test(dir) ? dir : dir + "web/";
+  } catch { return "./web/"; }
+})();
 /* ══════════════════════════════════════════════════════════════
    بررسی سازگاری مرورگر — فاکتورخوان
    باید پیش از همهٔ اسکریپت‌ها بارگذاری شود و فقط از ES5 استفاده کند،
@@ -1725,8 +1731,8 @@ const Views = (() => {
       win.document.write(`<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="utf-8">
         <title>چاپ فاکتور ${esc(inv.number)}</title>
         <style>
-          @font-face{font-family:V;src:url('/assets/fonts/Vazirmatn-Regular.woff2') format('woff2');font-weight:400}
-          @font-face{font-family:V;src:url('/assets/fonts/Vazirmatn-Bold.woff2') format('woff2');font-weight:700}
+          @font-face{font-family:V;src:url('${FK_ASSET_BASE}assets/fonts/Vazirmatn-Regular.woff2') format('woff2');font-weight:400}
+          @font-face{font-family:V;src:url('${FK_ASSET_BASE}assets/fonts/Vazirmatn-Bold.woff2') format('woff2');font-weight:700}
           *{box-sizing:border-box}
           body{font-family:V,Tahoma,sans-serif;padding:34px;color:#101828;line-height:1.9}
           .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #d4af37;padding-bottom:14px}
@@ -3326,23 +3332,7 @@ const App = (() => {
       } catch { /* بی‌صدا */ }
     });
 
-    /* نسخه آفلاین */
-    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("/sw.js").then((reg) => {
-        /* اگر نسخهٔ جدیدی در انتظار است، فوراً فعال شود تا کد قدیمی گیر نکند */
-        if (reg && reg.waiting) reg.waiting.postMessage("skip-waiting");
-        if (reg) {
-          reg.addEventListener("updatefound", () => {
-            const sw = reg.installing;
-            if (sw) sw.addEventListener("statechange", () => {
-              if (sw.state === "installed" && navigator.serviceWorker.controller) {
-                sw.postMessage("skip-waiting");
-              }
-            });
-          });
-        }
-      }).catch(() => {});
-    }
+    /* سرویس‌ورکر در نسخهٔ PHP وجود ندارد: کش کهنه، کاربر را روی نسخهٔ قدیمی نگه می‌داشت */
 
     /* بازگردانی نشست */
     const token = API.getToken();
