@@ -888,9 +888,48 @@ function api_invoice_export(array $user): void
         exit;
     }
 
-    /* اکسل و CSV هر دو CSV می‌گیرند: اکسل با BOM فارسی را درست می‌فهمد.
-       (xlsx واقعی یک فایل ZIP با XML است؛ در نسخهٔ PHP نوشتنش ارزش
-       دارد ولی CSV با BOM در همهٔ نسخه‌های اکسل بدون خطا باز می‌شود.) */
+    /* ── XLSX واقعی ──
+       پیش از این، «خروجی اکسل» هم CSV با BOM بود. اکسل بازش می‌کرد
+       ولی هشدار می‌داد «قالب فایل با پسوند نمی‌خواند» و کاربر فکر
+       می‌کرد فایل خراب است. حالا xlsx واقعی ساخته می‌شود؛ نسخهٔ
+       پایتون هم با openpyxl همین را می‌دهد. */
+    if ($format === 'xlsx') {
+        $headers = array('شناسه', 'شماره فاکتور', 'تاریخ', 'نوع', 'جهت', 'فروشنده',
+            'خریدار', 'جمع اقلام', 'تخفیف', 'مالیات', 'مبلغ کل', 'پرداختی',
+            'وضعیت', 'منبع', 'اعتماد');
+        $typeFa = array('printed' => 'چاپی', 'thermal' => 'حرارتی',
+            'handwritten' => 'دستی', 'audio' => 'صوتی', 'other' => 'سایر');
+        $statusFa = array('draft' => 'پیش‌نویس', 'review' => 'بازبینی',
+            'confirmed' => 'تأیید‌شده', 'archived' => 'بایگانی');
+        $sourceFa = array('manual' => 'دستی', 'cloud' => 'ابر', 'local' => 'لوکال');
+        $body = array();
+        foreach ($rows as $inv) {
+            $body[] = array(
+                array('v' => (int) ($inv['id'] ?? 0), 'n' => true),
+                (string) ($inv['number'] ?? ''),
+                (string) ($inv['issue_date'] ?? ''),
+                $typeFa[(string) ($inv['invoice_type'] ?? '')] ?? (string) ($inv['invoice_type'] ?? ''),
+                ((string) ($inv['direction'] ?? '') === 'purchase' ? 'خرید' : 'فروش'),
+                (string) ($inv['seller_name'] ?? ''),
+                (string) ($inv['buyer_name'] ?? ''),
+                array('v' => (int) ($inv['subtotal'] ?? 0), 'n' => true),
+                array('v' => (int) ($inv['discount'] ?? 0), 'n' => true),
+                array('v' => (int) ($inv['tax'] ?? 0), 'n' => true),
+                array('v' => (int) ($inv['total'] ?? 0), 'n' => true),
+                array('v' => (int) ($inv['paid'] ?? 0), 'n' => true),
+                $statusFa[(string) ($inv['status'] ?? '')] ?? (string) ($inv['status'] ?? ''),
+                $sourceFa[(string) ($inv['source'] ?? '')] ?? (string) ($inv['source'] ?? ''),
+                (int) ($inv['confidence'] ?? 0) . '٪',
+            );
+        }
+        $xlsx = fk_xlsx_build($headers, $body, 'فاکتورها');
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="invoices-' . $today . '.xlsx"');
+        header('Content-Length: ' . strlen($xlsx));
+        echo $xlsx;
+        exit;
+    }
+
     $fh = fopen('php://temp', 'r+');
     fputcsv($fh, array('شماره', 'تاریخ', 'نوع', 'فروشنده', 'خریدار', 'جمع اقلام', 'تخفیف', 'مالیات', 'مبلغ کل', 'وضعیت', 'منبع', 'اعتماد', 'اقلام', 'برچسب‌ها'), ',', '"', '\\');
     foreach ($rows as $inv) {
@@ -918,9 +957,8 @@ function api_invoice_export(array $user): void
     rewind($fh);
     $csv = (string) stream_get_contents($fh);
     fclose($fh);
-    $ext = $format === 'xlsx' ? 'csv' : 'csv';
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="invoices-' . $today . '.' . $ext . '"');
+    header('Content-Disposition: attachment; filename="invoices-' . $today . '.csv"');
     echo chr(0xEF) . chr(0xBB) . chr(0xBF) . $csv;
     exit;
 }

@@ -1660,6 +1660,190 @@ function fk_zip_store(array $files): string
     return $out . $central . "PK\x05\x06" . $eocd;
 }
 
+/**
+ * ساخت فایل XLSX واقعی (بدون هیچ افزونه‌ای)
+ * ==========================================
+ * پیش از این، «خروجی اکسل» در PHP یک CSV با BOM می‌داد. اکسل آن را باز
+ * می‌کرد ولی با هشدار «قالب فایل با پسوند نمی‌خواند» — و کاربر فکر
+ * می‌کرد فایل خراب است. نسخهٔ پایتون xlsx واقعی با openpyxl می‌ساخت.
+ *
+ * این‌جا همان xlsx را دستی می‌سازیم: یک بستهٔ ZIP با ده XML کمینه.
+ * از fk_zip_store استفاده می‌کنیم که از قبل بود (حالت stored، بدون
+ * فشرده‌سازی) — پس روی ویندوز ۷ هم بدون ZipArchive کار می‌کند.
+ *
+ * ویژگی‌ها همان پایتون: برگهٔ راست‌به‌چپ، سرستون تیره با متن طلایی،
+ * قالب عددی سه‌رقمی‌جداشده، و ستون‌های پهن‌شده.
+ */
+
+/** یک حرف ستون اکسل از شمارهٔ ۱-پایه */
+function fk_xlsx_col(int $n): string
+{
+    $s = '';
+    while ($n > 0) {
+        $n--;
+        $s = chr(65 + ($n % 26)) . $s;
+        $n = intdiv($n, 26);
+    }
+    return $s;
+}
+
+/** فرار دادن متن برای XML */
+function fk_xlsx_esc(string $s): string
+{
+    $s = (string) preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $s);
+    return htmlspecialchars($s, ENT_QUOTES | ENT_XML1, 'UTF-8');
+}
+
+/**
+ * @param array $headers سرستون‌ها (متن)
+ * @param array $rows    ردیف‌ها؛ هر خانه یا رشته است یا array('v'=>مقدار,'n'=>true) برای عدد
+ * @param string $sheetName نام برگه
+ */
+function fk_xlsx_build(array $headers, array $rows, string $sheetName = 'فاکتورها'): string
+{
+    $nCols = max(1, count($headers));
+    $nRows = count($rows) + 1;
+
+    /* ── برگهٔ اصلی ── */
+    $sheetRows = '';
+
+    /* سرستون — style 1 (تیره/طلایی/وسط‌چین) */
+    $cells = '';
+    foreach ($headers as $i => $h) {
+        $ref = fk_xlsx_col($i + 1) . '1';
+        $cells .= '<c r="' . $ref . '" s="1" t="inlineStr"><is><t>'
+            . fk_xlsx_esc((string) $h) . '</t></is></c>';
+    }
+    $sheetRows .= '<row r="1" ht="26" customHeight="1">' . $cells . '</row>';
+
+    /* داده — style 2 برای عدد، 3 برای متن (راست‌چین) */
+    foreach ($rows as $ri => $row) {
+        $r = $ri + 2;
+        $cells = '';
+        foreach (array_values($row) as $ci => $cell) {
+            $ref = fk_xlsx_col($ci + 1) . $r;
+            if (is_array($cell)) {
+                $v = $cell['v'] ?? '';
+                if (!empty($cell['n']) && is_numeric($v)) {
+                    $cells .= '<c r="' . $ref . '" s="2"><v>' . (0 + $v) . '</v></c>';
+                } else {
+                    $cells .= '<c r="' . $ref . '" s="3" t="inlineStr"><is><t>'
+                        . fk_xlsx_esc((string) $v) . '</t></is></c>';
+                }
+            } else {
+                $cells .= '<c r="' . $ref . '" s="3" t="inlineStr"><is><t>'
+                    . fk_xlsx_esc((string) $cell) . '</t></is></c>';
+            }
+        }
+        $sheetRows .= '<row r="' . $r . '">' . $cells . '</row>';
+    }
+
+    /* پهنای ستون‌ها: شناسه/شماره باریک، نام‌ها پهن */
+    $widths = array(8, 16, 12, 10, 8, 26, 26, 14, 12, 12, 14, 12, 12, 10, 10);
+    $colsXml = '';
+    for ($i = 0; $i < $nCols; $i++) {
+        $w = $widths[$i] ?? 14;
+        $colsXml .= '<col min="' . ($i + 1) . '" max="' . ($i + 1) . '" width="' . $w . '" customWidth="1"/>';
+    }
+
+    $dim = 'A1:' . fk_xlsx_col($nCols) . max(1, $nRows);
+
+    $sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        . ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        . '<dimension ref="' . $dim . '"/>'
+        /* rightToLeft="1" — همان sheet_view.rightToLeft پایتون */
+        . '<sheetViews><sheetView rightToLeft="1" workbookViewId="0" tabSelected="1">'
+        . '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+        . '</sheetView></sheetViews>'
+        . '<sheetFormatPr defaultRowHeight="18"/>'
+        . '<cols>' . $colsXml . '</cols>'
+        . '<sheetData>' . $sheetRows . '</sheetData>'
+        . '<autoFilter ref="' . $dim . '"/>'
+        . '</worksheet>';
+
+    /* ── سبک‌ها ── */
+    $styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        . '<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts>'
+        . '<fonts count="3">'
+        . '<font><sz val="11"/><name val="Tahoma"/></font>'
+        . '<font><b/><sz val="11"/><color rgb="FFD4AF37"/><name val="Tahoma"/></font>'
+        . '<font><sz val="11"/><name val="Tahoma"/></font>'
+        . '</fonts>'
+        . '<fills count="3">'
+        . '<fill><patternFill patternType="none"/></fill>'
+        . '<fill><patternFill patternType="gray125"/></fill>'
+        . '<fill><patternFill patternType="solid"><fgColor rgb="FF1B2540"/><bgColor indexed="64"/></patternFill></fill>'
+        . '</fills>'
+        . '<borders count="2">'
+        . '<border><left/><right/><top/><bottom/><diagonal/></border>'
+        . '<border><left style="thin"><color rgb="FFD9D9D9"/></left>'
+        . '<right style="thin"><color rgb="FFD9D9D9"/></right>'
+        . '<top style="thin"><color rgb="FFD9D9D9"/></top>'
+        . '<bottom style="thin"><color rgb="FFD9D9D9"/></bottom><diagonal/></border>'
+        . '</borders>'
+        . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        . '<cellXfs count="4">'
+        /* 0: پیش‌فرض */
+        . '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        /* 1: سرستون */
+        . '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">'
+        . '<alignment horizontal="center" vertical="center"/></xf>'
+        /* 2: عدد با جداکنندهٔ هزارگان */
+        . '<xf numFmtId="164" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1">'
+        . '<alignment horizontal="left" vertical="center"/></xf>'
+        /* 3: متن */
+        . '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1">'
+        . '<alignment horizontal="right" vertical="center"/></xf>'
+        . '</cellXfs>'
+        . '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+        . '</styleSheet>';
+
+    $workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        . ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        . '<sheets><sheet name="' . fk_xlsx_esc($sheetName) . '" sheetId="1" r:id="rId1"/></sheets>'
+        . '</workbook>';
+
+    $files = array(
+        '[Content_Types].xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            . '<Default Extension="xml" ContentType="application/xml"/>'
+            . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            . '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            . '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            . '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+            . '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+            . '</Types>',
+        '_rels/.rels' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            . '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+            . '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+            . '</Relationships>',
+        'xl/workbook.xml' => $workbook,
+        'xl/_rels/workbook.xml.rels' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            . '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+            . '</Relationships>',
+        'xl/worksheets/sheet1.xml' => $sheet,
+        'xl/styles.xml' => $styles,
+        'docProps/core.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+            . ' xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            . '<dc:title>فاکتورخوان</dc:title><dc:creator>فاکتورخوان</dc:creator>'
+            . '</cp:coreProperties>',
+        'docProps/app.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+            . '<Application>فاکتورخوان</Application></Properties>',
+    );
+
+    return fk_zip_store($files);
+}
+
 /** متن را به XML فایل Word تبدیل و بستهٔ .docx می‌سازد */
 function fk_docx_build(string $text): string
 {
