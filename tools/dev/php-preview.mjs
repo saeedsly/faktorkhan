@@ -184,6 +184,16 @@ catch (Throwable $e) { echo "\\n[[PHP-ERR:" . $e->getMessage() . "@" . $e->getLi
 /* نشست را همین‌جا بنویس تا فایل روی دیسک قطعی باشد */
 if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
 $__sid = session_id() ?: ($_COOKIE['fksid'] ?? '');
+/* هدرهایی که خود PHP ست کرده (نوع محتوا، نام فایل دانلود) — بدون
+   این، پیش‌نمایش همهٔ پاسخ‌های api.php را JSON اعلام می‌کرد و خروجی
+   اکسل با MIME غلط می‌رسید، هرچند فایل سالم بود. Apache واقعی همین
+   هدرها را می‌فرستد. */
+$__h = array();
+foreach (headers_list() as $__line) {
+    $__p = strpos($__line, ':');
+    if ($__p !== false) { $__h[] = $__line; }
+}
+echo "\\n@@HDR:" . base64_encode(json_encode($__h)) . ":@@";
 echo "\\n@@SID:" . $__sid . ":@@";
 clearstatcache(true);
 /* وضعیت را بعد از بستن نشست جمع کن تا فایل تازهٔ نشست هم در آن باشد */
@@ -206,6 +216,16 @@ echo "\\n@@STATE:" . base64_encode(json_encode($__dump)) . ":@@";
   }
   await new Promise(r => setTimeout(r, 150));
 
+  const hdrM = out.match(/@@HDR:([A-Za-z0-9+/=]+):@@/);
+  let phpHeaders = {};
+  if (hdrM) {
+    try {
+      for (const line of JSON.parse(UB(hdrM[1]))) {
+        const i = line.indexOf(":");
+        if (i > 0) phpHeaders[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+      }
+    } catch { phpHeaders = {}; }
+  }
   const sidM = out.match(/@@SID:([^:]*):@@/);
   const sid = sidM ? sidM[1] : "";
   const m = out.match(/@@STATE:([A-Za-z0-9+/=]+):@@/);
@@ -215,8 +235,10 @@ echo "\\n@@STATE:" . base64_encode(json_encode($__dump)) . ":@@";
     for (const [k, v] of Object.entries(dump)) next[k] = UB(v);
     state = next;
   }
-  const text = out.replace(/@@STATE:[\s\S]*$/, "").replace(/\n@@SID:[^:]*:@@/, "");
-  return { body: text, cookie: sid };
+  const text = out.replace(/@@STATE:[\s\S]*$/, "")
+    .replace(/\n@@HDR:[A-Za-z0-9+/=]+:@@/, "")
+    .replace(/\n@@SID:[^:]*:@@/, "");
+  return { body: text, cookie: sid, headers: phpHeaders };
 }
 
 function parseCookies(header) {
@@ -295,12 +317,30 @@ const server = http.createServer((req, res) => {
     }
 
     const body = result.body;
-    const isJson = entry === "api.php" || body.trimStart().startsWith("{");
+    /* اگر خود PHP نوع محتوا را گفته (مثلاً xlsx یا csv)، همان ملاک
+       است؛ وگرنه حدس می‌زنیم. */
+    const phpType = (result.headers || {})["content-type"] || "";
+    const isJson = phpType ? /json/i.test(phpType)
+      : (entry === "api.php" || body.trimStart().startsWith("{"));
     const headers = {
-      "Content-Type": isJson ? "application/json; charset=utf-8" : "text/html; charset=utf-8",
+      "Content-Type": phpType || (isJson ? "application/json; charset=utf-8" : "text/html; charset=utf-8"),
       "Cache-Control": "no-store",
       "X-Frame-Options": "SAMEORIGIN",
     };
+    /* نام فایل ممکن است فارسی باشد؛ Node هدر غیر-ASCII را رد می‌کند
+       و کل سرور را می‌اندازد. RFC 6266 راه‌حل دارد: نسخهٔ ASCII ساده
+       به‌همراه filename* با کدگذاری درصدی. */
+    const disp = (result.headers || {})["content-disposition"];
+    if (disp) {
+      const m2 = disp.match(/filename="?([^";]+)"?/i);
+      if (m2 && /[^\x20-\x7E]/.test(m2[1])) {
+        const ascii = m2[1].replace(/[^\x20-\x7E]/g, "_");
+        headers["Content-Disposition"] =
+          disp.replace(m2[1], ascii) + "; filename*=UTF-8''" + encodeURIComponent(m2[1]);
+      } else if (!/[^\x20-\x7E]/.test(disp)) {
+        headers["Content-Disposition"] = disp;
+      }
+    }
     if (result.cookie) headers["Set-Cookie"] = `fksid=${result.cookie}; Path=/; SameSite=Lax`;
     res.writeHead(200, headers);
     res.end(body);
