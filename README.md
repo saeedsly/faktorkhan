@@ -97,7 +97,7 @@ ISCC installer\faktorkhan.iss
 
 | هدف | راه |
 |---|---|
-| تست سریع سرویس ابری روی WAMP/htdocs | `faktorkhan-php-htdocs.zip` → در `www` باز کنید → [docs/PHP-HTTPDOCKS-FA.md](docs/PHP-HTTPDOCKS-FA.md) |
+| **همان برنامه، با PHP (WAMP/htdocs)** | `faktorkhan-php-htdocs.zip` → در `www` باز کنید → [docs/PHP-HTTPDOCKS-FA.md](docs/PHP-HTTPDOCKS-FA.md) |
 | اجرای کامل روی ویندوز ۷ | پایتون ۳.۸.۱۰ + `START-WINDOWS.bat` → [docs/WINDOWS-7-FA.md](docs/WINDOWS-7-FA.md) |
 | ویندوز ۱۰/۱۱ | بستهٔ PORTABLE → `START-WINDOWS.bat` |
 
