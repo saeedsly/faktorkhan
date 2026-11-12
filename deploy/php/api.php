@@ -575,10 +575,15 @@ switch ($action) {
                 'languages' => fk_languages(),
             ),
             'local' => array(
-                'pdf' => true,      /* PDF متنی با استخراج خودِ PHP */
-                'image' => false,   /* تصویر بدون موتور ابری خوانده نمی‌شود */
+                /* PDF متنی و فایل متنی را خود سرور می‌خواند (fk_pdf_extract_text) */
+                'pdf' => true,
+                'text' => true,
+                'image' => false,   /* تصویر بدون موتور ابری/OCR خوانده نمی‌شود */
                 'audio' => false,
                 'ai' => $aiSet,
+                'engine' => 'pdfphp',
+                'note' => 'PDF متنی و فایل‌های متنی روی همین سرور خوانده می‌شوند؛ '
+                    . 'برای تصویر و صدا موتور ابری لازم است.',
             ),
             'max_upload_mb' => (int) fk_cfg_get('max_upload_mb', 25),
         ));
@@ -606,8 +611,12 @@ switch ($action) {
         if ((int) ($file['size'] ?? 0) > $maxMb * 1024 * 1024) {
             api_fail('حجم فایل بیشتر از حد مجاز (' . $maxMb . ' مگابایت) است.', 413);
         }
+        /* موتور محلی به توکن نیاز ندارد — و گرنه کاربر بدون توکن
+           اصلاً نمی‌توانست فایل بفرستد، هرچند PDF متنی را خود سرور
+           می‌خواند. */
         if ($provider === 'cloud' && (!token_is_set() || gateway_url() === '')) {
-            api_fail('سرویس ابری آماده نیست. توکن را در «پنل مدیریت → سرویس ابری» ثبت کنید.', 409);
+            api_fail('سرویس ابری آماده نیست. توکن را در «پنل مدیریت → سرویس ابری» ثبت کنید، '
+                . 'یا موتور «لوکال» را انتخاب کنید (PDF متنی و فایل متنی را خود سرور می‌خواند).', 409);
         }
         $job = api_job_start($user, $file, array(
             'provider' => $provider,
@@ -618,7 +627,10 @@ switch ($action) {
             'delete_after' => api_bool('delete_after', true),
             'file_name' => $name,
         ));
-        if (isset($job['error'])) {
+        /* ⚠️ isset نه! آرایهٔ کار همیشه کلید 'error' را با رشتهٔ خالی
+           دارد (نه فقط وقتی خطایی هست). با isset، *هر* آپلود موفق هم
+           api_fail('') می‌داد — پیام خالی، و کاربر هیچ نمی‌فهمید چه شد. */
+        if (isset($job['error']) && (string) $job['error'] !== '') {
             api_fail((string) $job['error'], 400);
         }
         api_out(array('job' => $job), 201);
@@ -645,7 +657,10 @@ switch ($action) {
             'file_name' => substr((string) basename(parse_url($link, PHP_URL_PATH) ?: 'link'), 0, 255),
             'source_link' => $link,
         ));
-        if (isset($job['error'])) {
+        /* ⚠️ isset نه! آرایهٔ کار همیشه کلید 'error' را با رشتهٔ خالی
+           دارد (نه فقط وقتی خطایی هست). با isset، *هر* آپلود موفق هم
+           api_fail('') می‌داد — پیام خالی، و کاربر هیچ نمی‌فهمید چه شد. */
+        if (isset($job['error']) && (string) $job['error'] !== '') {
             api_fail((string) $job['error'], 400);
         }
         api_out(array('job' => $job), 201);

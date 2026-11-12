@@ -991,6 +991,460 @@ function fk_inflate_raw(string $d): string
 }
 
 /**
+ * خواندن متن PDF بدون هیچ افزونه‌ای
+ * ==================================
+ * نسخهٔ پایتون برای PDF متنی کتابخانهٔ pypdf دارد. روی WAMP/ویندوز ۷
+ * نه pypdf هست، نه pdftotext، نه معمولاً ZipArchive. پس این‌جا خودِ
+ * ساختار PDF را می‌خوانیم:
+ *
+ *   ۱) جریان‌های محتوا را پیدا می‌کنیم (`stream … endstream`).
+ *   ۲) اگر فشرده‌اند (Filter /FlateDecode)، با fk_inflate_raw باز
+ *      می‌شوند — همان پیاده‌سازی دستی که برای ZIP نوشته شده بود.
+ *   ۳) عملگرهای متن (Tj، TJ، '، ") را می‌خوانیم و رشته‌ها را
+ *      بیرون می‌کشیم.
+ *   ۴) رشته‌های هگز و رمزگذاری‌های UTF-16BE/PDFDoc را رمزگشایی
+ *      می‌کنیم.
+ *
+ * ⚠️ این «OCR» نیست: فایل اسکن‌شده هیچ لایهٔ متنی ندارد و بدون موتور
+ * ابری یا Tesseract خوانده نمی‌شود. اگر PDF تصویری بود، با پیام روشن
+ * برمی‌گردیم، نه با صفحهٔ سفید یا انتظار بی‌پایان.
+ */
+
+/**
+ * باز کردن جریان PDF.
+ * PDF معمولاً zlib می‌دهد (هدر 0x78)، نه deflate خام. gzinflate و
+ * پیاده‌سازی دستی هر دو «خام» می‌خواهند، پس دو بایت هدر zlib را
+ * جدا می‌کنیم و checksum چهار بایتی آخر را هم دور می‌ریزیم.
+ * بدون این، هر PDF متنی «بدون لایهٔ متنی» تشخیص داده می‌شد.
+ */
+function fk_pdf_inflate(string $d): string
+{
+    if ($d === '') {
+        return '';
+    }
+    /* zlib wrapper: CMF باید 0x78 باشد (deflate + 32K window) */
+    if (ord($d[0]) === 0x78 && strlen($d) > 6) {
+        if (function_exists('gzuncompress')) {
+            $out = @gzuncompress($d);
+            if ($out !== false && $out !== '') {
+                return $out;
+            }
+        }
+        /* FCHECK: (CMF*256 + FLG) % 31 == 0 → هدر معتبر است */
+        $cmf = ord($d[0]);
+        $flg = ord($d[1]);
+        if ((($cmf << 8) + $flg) % 31 === 0) {
+            /* دور ریختن هدر (۲ بایت + دیکشنری اختیاری) و ۴ بایت adler32 */
+            $start = 2;
+            if (($flg & 0x20) === 0x20 && strlen($d) > 8) {
+                $start += 4;
+            }
+            $body = substr($d, $start, strlen($d) - $start - 4);
+            $out = fk_inflate_raw($body);
+            if ($out !== '') {
+                return $out;
+            }
+        }
+    }
+    /* گاهی واقعاً خام است */
+    $out = fk_inflate_raw($d);
+    if ($out !== '') {
+        return $out;
+    }
+    /* آخرین تلاش: بدون ۴ بایت checksum */
+    return fk_inflate_raw(substr($d, 0, max(0, strlen($d) - 4)));
+}
+
+/** آیا این فایل PDF است؟ (نه از روی پسوند، از روی امضا) */
+function fk_is_pdf(string $data): bool
+{
+    return strncmp($data, '%PDF-', 5) === 0 || strpos(substr($data, 0, 1024), '%PDF-') !== false;
+}
+
+/**
+ * رمزگشایی یک رشتهٔ متنی داخل PDF.
+ * PDF دو حالت اصلی دارد: (الف) رشتهٔ لفظی `(…)` با اسکیپ،
+ * (ب) رشتهٔ هگز `<…>` که در فارسی/عربی معمولاً UTF-16BE است.
+ */
+function fk_pdf_decode_string(string $raw, bool $isHex, array $map = array()): string
+{
+    if ($isHex) {
+        $hex = preg_replace('/[^0-9A-Fa-f]/', '', $raw);
+        if (strlen($hex) % 2 === 1) {
+            $hex .= '0';
+        }
+        $bytes = (string) @hex2bin($hex);
+    } else {
+        /* اسکیپ‌های استاندارد PDF */
+        $bytes = '';
+        $len = strlen($raw);
+        for ($i = 0; $i < $len; $i++) {
+            $c = $raw[$i];
+            if ($c !== '\\') {
+                $bytes .= $c;
+                continue;
+            }
+            $i++;
+            if ($i >= $len) {
+                break;
+            }
+            $n = $raw[$i];
+            switch ($n) {
+                case 'n': $bytes .= "\n"; break;
+                case 'r': $bytes .= "\r"; break;
+                case 't': $bytes .= "\t"; break;
+                case 'b': $bytes .= "\x08"; break;
+                case 'f': $bytes .= "\x0C"; break;
+                case '(': $bytes .= '('; break;
+                case ')': $bytes .= ')'; break;
+                case '\\': $bytes .= '\\'; break;
+                default:
+                    if ($n >= '0' && $n <= '7') {
+                        /* اکتال ۱ تا ۳ رقمی */
+                        $oct = $n;
+                        for ($k = 0; $k < 2 && $i + 1 < $len && $raw[$i + 1] >= '0' && $raw[$i + 1] <= '7'; $k++) {
+                            $oct .= $raw[++$i];
+                        }
+                        $bytes .= chr(octdec($oct) & 0xFF);
+                    } else {
+                        $bytes .= $n;
+                    }
+            }
+        }
+    }
+
+    /* UTF-16BE: با BOM شروع می‌شود و بیشتر PDFهای فارسی این‌طورند */
+    if (strncmp($bytes, "\xFE\xFF", 2) === 0) {
+        $bytes = substr($bytes, 2);
+        return fk_utf16be_to_utf8($bytes);
+    }
+    /*
+     * تشخیص UTF-16BE بدون BOM.
+     *
+     * نسخهٔ اول فقط «تعداد بایت صفر در جایگاه زوج» را می‌شمرد و برای
+     * متن فارسی شکست می‌خورد: حروف فارسی در UTF-16BE بایت اولِ
+     * غیرصفر دارند (۰۶۲۷ نه ۰۰۲۷). یعنی همهٔ رشته‌های فارسی «ASCII
+     * با نویسه‌های عجیب» تشخیص داده می‌شدند.
+     *
+     * حالا منطق درست است: در UTF-16BE هر کاراکتر ASCII یک بایت صفر
+     * *اول* دارد، پس اگر بیشترِ جفت‌بایت‌ها بایت اولشان صفر باشد،
+     * UTF-16BE است. فارسی هم به همین دلیل شناسایی می‌شود که بایت اول
+     * در محدودهٔ 0x06–0x08 (خط عربی) می‌افتد.
+     *
+     * حالت سوم: هگز خالص (هر بایت < 0x20 یا > 0x7E) هم UTF-8 نیست،
+     * پس UTF-16BE امتحان می‌شود.
+     */
+    $lenB = strlen($bytes);
+    $half = intdiv($lenB, 2);
+    if ($half > 1) {
+        $zeroFirst = 0;      /* بایت اولِ هر جفت صفر */
+        $arabicFirst = 0;    /* بایت اول در محدودهٔ خط عربی */
+        $usable = 0;
+        for ($i = 0; $i + 1 < $lenB; $i += 2) {
+            $hi = ord($bytes[$i]);
+            $usable++;
+            if ($hi === 0x00) {
+                $zeroFirst++;
+            } elseif ($hi >= 0x06 && $hi <= 0x08) {
+                $arabicFirst++;
+            }
+        }
+        if ($usable > 0 && ($zeroFirst + $arabicFirst) / $usable > 0.80) {
+            return fk_utf16be_to_utf8($bytes);
+        }
+    }
+
+    /* نقشهٔ ToUnicode اگر داشتیم (CID فونت‌های فارسی) */
+    if ($map) {
+        $mapped = fk_pdf_apply_map($bytes, $map);
+        if ($mapped !== '') {
+            return $mapped;
+        }
+    }
+
+    return fk_pdf_clean_text($bytes);
+}
+
+/** UTF-16BE → UTF-8 (دستی، چون mbstring در php-wasm و بعضی هاست‌ها نیست) */
+function fk_utf16be_to_utf8(string $s): string
+{
+    $out = '';
+    $n = strlen($s);
+    for ($i = 0; $i + 1 < $n; $i += 2) {
+        $cp = (ord($s[$i]) << 8) | ord($s[$i + 1]);
+        /* جفت جانشین (surrogate pair) */
+        if ($cp >= 0xD800 && $cp <= 0xDBFF && $i + 3 < $n) {
+            $lo = (ord($s[$i + 2]) << 8) | ord($s[$i + 3]);
+            if ($lo >= 0xDC00 && $lo <= 0xDFFF) {
+                $cp = 0x10000 + (($cp - 0xD800) << 10) + ($lo - 0xDC00);
+                $i += 2;
+            }
+        }
+        $out .= fk_codepoint_to_utf8($cp);
+    }
+    return $out;
+}
+
+/** یک code point → UTF-8 */
+function fk_codepoint_to_utf8(int $cp): string
+{
+    if ($cp < 0) {
+        return '';
+    }
+    if ($cp < 0x80) {
+        return chr($cp);
+    }
+    if ($cp < 0x800) {
+        return chr(0xC0 | ($cp >> 6)) . chr(0x80 | ($cp & 0x3F));
+    }
+    if ($cp < 0x10000) {
+        return chr(0xE0 | ($cp >> 12)) . chr(0x80 | (($cp >> 6) & 0x3F)) . chr(0x80 | ($cp & 0x3F));
+    }
+    return chr(0xF0 | ($cp >> 18)) . chr(0x80 | (($cp >> 12) & 0x3F))
+        . chr(0x80 | (($cp >> 6) & 0x3F)) . chr(0x80 | ($cp & 0x3F));
+}
+
+/** اعمال نقشهٔ ToUnicode: کلید = کاراکتر، مقدار = متن */
+function fk_pdf_apply_map(string $bytes, array $map): string
+{
+    $out = '';
+    $n = strlen($bytes);
+    for ($i = 0; $i < $n; $i++) {
+        $key = $bytes[$i];
+        $code = ord($key);
+        if (isset($map[$code])) {
+            $out .= $map[$code];
+        } elseif ($code >= 32 || $code === 10) {
+            $out .= $key;
+        }
+    }
+    return $out;
+}
+
+/** پاک‌سازی: نویسه‌های کنترلی PDF را به فاصله تبدیل می‌کند */
+function fk_pdf_clean_text(string $s): string
+{
+    $s = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', ' ', $s);
+    $s = str_replace(array("\r\n", "\r"), "\n", (string) $s);
+    return (string) $s;
+}
+
+/**
+ * خواندن ToUnicode از فونت‌ها.
+ * فونت‌های فارسی معمولاً CID دارند و بدون این نقشه متن «۰۰۰۰» یا
+ * نویسه‌های عجیب می‌شود. ساختار: `<hex> <hex> <hex> <hex> ... beginbfchar`
+ * و `beginbfrange … endbfrange`.
+ */
+function fk_pdf_font_maps(string $pdf): array
+{
+    $maps = array();
+    if (!preg_match_all('/\/ToUnicode\s+(\d+)\s+0\s+R/s', $pdf, $m)) {
+        return $maps;
+    }
+    foreach ($m[1] as $objNum) {
+        if (!preg_match('/' . preg_quote((string) $objNum, '/') . '\s+0\s+obj(.*?)endobj/s', $pdf, $om)) {
+            continue;
+        }
+        $body = $om[1];
+        if (!preg_match('/stream\r?\n(.*?)endstream/s', $body, $sm)) {
+            continue;
+        }
+        $cmap = $sm[1];
+        if (stripos($body, 'FlateDecode') !== false) {
+            $cmap = fk_pdf_inflate($cmap);
+        }
+        if ($cmap === '') {
+            continue;
+        }
+        /* beginbfchar */
+        if (preg_match_all('/beginbfchar(.*?)endbfchar/s', $cmap, $bc)) {
+            foreach ($bc[1] as $block) {
+                if (preg_match_all('/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/', $block, $pairs, PREG_SET_ORDER)) {
+                    foreach ($pairs as $p) {
+                        $from = hexdec(substr($p[1], 0, 4));
+                        $maps[(int) $from] = fk_utf16be_to_utf8((string) @hex2bin(strlen($p[2]) % 2 ? '0' . $p[2] : $p[2]));
+                    }
+                }
+            }
+        }
+        /* beginbfrange */
+        if (preg_match_all('/beginbfrange(.*?)endbfrange/s', $cmap, $br)) {
+            foreach ($br[1] as $block) {
+                if (preg_match_all('/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/', $block, $ranges, PREG_SET_ORDER)) {
+                    foreach ($ranges as $r) {
+                        $a = (int) hexdec(substr($r[1], 0, 4));
+                        $b = (int) hexdec(substr($r[2], 0, 4));
+                        $dst = hexdec(strlen($r[3]) % 2 ? '0' . $r[3] : $r[3]);
+                        if ($b - $a > 512) {
+                            continue;   /* فایل خراب؛ حلقهٔ بی‌پایان نکن */
+                        }
+                        for ($cp = $a; $cp <= $b; $cp++) {
+                            $maps[$cp] = fk_codepoint_to_utf8((int) ($dst + ($cp - $a)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return $maps;
+}
+
+/**
+ * استخراج متن از یک جریان محتوا.
+ * عملگرهای متنی: Tj و TJ (آرایه) و ' و " .
+ * بین خطوط هم فاصله می‌گذاریم تا کلمات به هم نچسبند.
+ */
+function fk_pdf_text_from_stream(string $content, array $fontMap): string
+{
+    $out = '';
+    $len = strlen($content);
+    $i = 0;
+
+    while ($i < $len) {
+        $c = $content[$i];
+
+        /* رشتهٔ لفظی */
+        if ($c === '(') {
+            $depth = 1;
+            $start = ++$i;
+            while ($i < $len && $depth > 0) {
+                if ($content[$i] === '\\') {
+                    $i += 2;
+                    continue;
+                }
+                if ($content[$i] === '(') {
+                    $depth++;
+                } elseif ($content[$i] === ')') {
+                    $depth--;
+                }
+                $i++;
+            }
+            $raw = substr($content, $start, $i - $start - 1);
+            /* فقط اگر بعدش عملگر متنی بود */
+            if (preg_match('/^\s*(Tj|TJ|\'|")/', substr($content, $i, 12))) {
+                $out .= fk_pdf_decode_string($raw, false, $fontMap);
+            }
+            continue;
+        }
+
+        /* رشتهٔ هگز */
+        if ($c === '<' && $i + 1 < $len && $content[$i + 1] !== '<') {
+            $end = strpos($content, '>', $i);
+            if ($end === false) {
+                break;
+            }
+            $raw = substr($content, $i + 1, $end - $i - 1);
+            $i = $end + 1;
+            if (preg_match('/^\s*(Tj|TJ)/', substr($content, $i, 12))) {
+                $out .= fk_pdf_decode_string($raw, true, $fontMap);
+            }
+            continue;
+        }
+
+        /* عملگرهای جابه‌جایی خط */
+        if ($c === 'T' && $i + 1 < $len) {
+            $two = substr($content, $i, 2);
+            if ($two === 'Td' || $two === 'TD' || $two === 'Tm' || $two === 'T*') {
+                if ($out !== '' && substr($out, -1) !== "\n") {
+                    $out .= "\n";
+                }
+                $i += 2;
+                continue;
+            }
+        }
+        $i++;
+    }
+    return $out;
+}
+
+/**
+ * استخراج متن کامل PDF.
+ * خروجی: array('text' => string, 'pages' => int, 'engine' => string,
+ *              'ok' => bool, 'message' => string)
+ */
+function fk_pdf_extract_text(string $data): array
+{
+    $result = array('text' => '', 'pages' => 0, 'engine' => 'pdfphp',
+        'ok' => false, 'message' => '');
+
+    if (!fk_is_pdf($data)) {
+        $result['message'] = 'این فایل PDF نیست.';
+        return $result;
+    }
+
+    /* تعداد صفحه‌ها: /Type /Page (نه /Pages) */
+    $pages = preg_match_all('/\/Type\s*\/Page[^s]/', $data);
+    $result['pages'] = max(1, (int) $pages);
+
+    $fontMap = fk_pdf_font_maps($data);
+
+    /* همهٔ جریان‌های محتوا را جمع می‌کنیم. عدد ۴۰ سقف است تا حافظه
+       روی هاست اشتراکی منفجر نشود؛ PDFهای بزرگ‌تر از ۴۰ صفحه هم با
+       همان ۴۰ صفحه خوانده می‌شوند (مثل سقف pypdf در نسخهٔ پایتون). */
+    $texts = array();
+    $offset = 0;
+    $seen = 0;
+    while ($seen < 120) {
+        $s = strpos($data, 'stream', $offset);
+        if ($s === false) {
+            break;
+        }
+        $offset = $s + 6;
+        /* بعد از stream یک CRLF یا LF می‌آید */
+        if (substr($data, $offset, 2) === "\r\n") {
+            $offset += 2;
+        } elseif (substr($data, $offset, 1) === "\n") {
+            $offset += 1;
+        } elseif (substr($data, $offset, 1) === "\r") {
+            $offset += 1;
+        }
+        $e = strpos($data, 'endstream', $offset);
+        if ($e === false) {
+            break;
+        }
+        $raw = substr($data, $offset, $e - $offset);
+        $header = substr($data, max(0, $s - 400), min(400, $s));
+        $isFlate = stripos($header, 'FlateDecode') !== false;
+        $isImage = preg_match('/\/Subtype\s*\/Image/', $header) === 1;
+
+        if (!$isImage) {
+            $content = $isFlate ? fk_pdf_inflate($raw) : $raw;
+            if ($content !== '' && (strpos($content, 'Tj') !== false
+                || strpos($content, 'TJ') !== false || strpos($content, 'Tf') !== false)) {
+                $t = fk_pdf_text_from_stream($content, $fontMap);
+                if (trim($t) !== '') {
+                    $texts[] = $t;
+                }
+            }
+        }
+        $offset = $e + 9;
+        $seen++;
+    }
+
+    $text = trim(fk_pdf_clean_text(implode("\n", $texts)));
+    $text = preg_replace("/\n{3,}/", "\n\n", $text);
+
+    if (mb_strlen_compat($text) < 20) {
+        $result['message'] = 'این PDF لایهٔ متنی ندارد (تصویری یا اسکن‌شده است). '
+            . 'برای خوانش دقیق، موتور ابری را در «پنل مدیریت → سرویس ابری» فعال کنید.';
+        return $result;
+    }
+
+    $result['text'] = $text;
+    $result['ok'] = true;
+    return $result;
+}
+
+/** mb_strlen بدون نیاز به mbstring */
+function mb_strlen_compat(string $s): int
+{
+    if (function_exists('mb_strlen')) {
+        return (int) mb_strlen($s, 'UTF-8');
+    }
+    return (int) preg_match_all('/./us', $s);
+}
+
+/**
  * خواندن یک عضو از فایل ZIP از راه «فهرست مرکزی»
  * (ZIP محلی ممکن است اندازهٔ فشرده را صفر بگذارد؛ فهرست مرکزی همیشه درست است).
  */
@@ -1827,6 +2281,81 @@ function job_tick(array $job, int $budget = 25): array
     }
 
     $stage = (string) ($job['stage'] ?? 'addfile');
+
+    /*
+     * ── موتور محلی ──────────────────────────────────────────────
+     * اگر کاربر «موتور لوکال» را انتخاب کرده، هیچ تماسی با سرویس ابری
+     * لازم نیست: PDF متنی را خود PHP می‌خواند.
+     *
+     * پیش از این، این شاخه وجود نداشت. یعنی وقتی توکن ابری تنظیم
+     * نبود و رابط خودکار موتور لوکال را انتخاب می‌کرد، کار تا ابد در
+     * وضعیت «در حال ارسال» می‌ماند و بعد از ۲۰ دقیقه «زمان انتظار
+     * تمام شد» می‌داد — درحالی‌که هیچ درخواستی به بیرون نمی‌رفت.
+     *
+     * این هم‌ارز local_ocr.py در نسخهٔ پایتون است، با همان قرارداد:
+     * متن استخراج‌شده یا پیام روشن، هرگز صفحهٔ سفید.
+     */
+    if ((string) ($job['engine'] ?? 'cloud') === 'local') {
+        $local = (string) ($job['local'] ?? '');
+        if ($local === '' || !is_file($local)) {
+            $job['status'] = 'failed';
+            $job['message'] = 'فایل موقت روی سرور پیدا نشد. دوباره آپلود کنید.';
+            job_save($job);
+            return $job;
+        }
+
+        $job['status'] = 'processing';
+        $job['stage'] = 'local';
+        $job['progress'] = 45;
+        $job['message'] = 'در حال خواندن فایل روی همین سرور…';
+        job_save($job);
+
+        $data = (string) @file_get_contents($local);
+        $ext = strtolower((string) pathinfo((string) ($job['name'] ?? $local), PATHINFO_EXTENSION));
+
+        $text = '';
+        $pages = 0;
+        $why = '';
+
+        if ($data === '') {
+            $why = 'فایل خالی است یا خواندنش ممکن نشد.';
+        } elseif (in_array($ext, array('txt', 'csv', 'md', 'json'), true)) {
+            $text = $data;
+            $pages = 1;
+        } elseif ($ext === 'pdf' || fk_is_pdf($data)) {
+            $pdf = fk_pdf_extract_text($data);
+            $text = (string) $pdf['text'];
+            $pages = (int) $pdf['pages'];
+            if (!$pdf['ok']) {
+                $why = (string) $pdf['message'];
+            }
+        } elseif (in_array($ext, array('jpg', 'jpeg', 'png', 'bmp', 'tif', 'tiff', 'webp'), true)) {
+            $why = 'خوانش تصویر روی این سرور ممکن نیست (موتور OCR محلی نصب نشده است). '
+                . 'از موتور ابری استفاده کنید یا متن را دستی وارد کنید.';
+        } else {
+            $why = 'این قالب فایل با موتور محلی خوانده نمی‌شود. (صدا و ویدیو فقط با موتور ابری.)';
+        }
+
+        $job['pages'] = $pages > 0 ? $pages : (int) ($job['pages'] ?? 0);
+
+        if (trim($text) !== '') {
+            /* همان تابعی که مسیر ابری استفاده می‌کند: کار را تمام
+               می‌کند، مصرف صفحه را ثبت می‌کند و تکست را ذخیره می‌کند. */
+            $job = job_finish_text($job, $text);
+            $job['engine'] = 'local';
+            $job['message'] = 'خوانش روی سرور کامل شد (' . ($job['pages'] ?: 1) . ' صفحه).';
+            job_save($job);
+            return $job;
+        }
+
+        $job['status'] = 'failed';
+        $job['stage'] = 'local';
+        $job['progress'] = 100;
+        $job['error'] = 'LocalNoText';
+        $job['message'] = $why !== '' ? $why : 'متنی از این فایل خوانده نشد.';
+        job_save($job);
+        return $job;
+    }
 
     /* ── مرحلهٔ ۱: ارسال فایل به سرویس ابری ───────────────────── */
     if ($stage === 'addfile') {
