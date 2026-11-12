@@ -61,6 +61,7 @@ const API_PATCHES = [
   ['"/api/system/features"', '"./api.php?action=features"'],
   ['"/api/system/health"', '"./api.php?action=health"'],
   ['"/api/system/support"', '"./api.php?action=support"'],
+  ['"/api/system/my-tickets"', '"./api.php?action=my-tickets"'],
   ['"/api/ocr/capabilities"', '"./api.php?action=ocr-capabilities"'],
   ['"/api/ocr/upload"', '"./api.php?action=ocr-upload"'],
   ['"/api/ocr/link"', '"./api.php?action=ocr-link"'],

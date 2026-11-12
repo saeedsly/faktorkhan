@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import branding
 from ..config import app_meta, settings
 from ..database import db_health, get_db
-from ..deps import audit, get_optional_user, rate_limit
+from ..deps import audit, get_current_user, get_optional_user, rate_limit
 from ..features import FEATURE_GROUPS, TOTAL
 from ..models import SupportMessage
 from ..schemas import SupportTicketIn
@@ -95,3 +95,36 @@ def create_ticket(payload: SupportTicketIn, request: Request,
     audit(db, user, "support_ticket", "ticket", ticket.id, ticket.subject, request)
     return {"ok": True, "id": ticket.id,
             "message": "پیام شما ثبت شد. پاسخ از طریق همین بخش و در پنل پشتیبانی پیگیری می‌شود."}
+
+
+@router.get("/my-tickets")
+def my_tickets(user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """پیام‌های خودِ کاربر و پاسخ‌هایشان.
+
+    تا پیش از این، کاربر فقط می‌توانست پیام بفرستد؛ پاسخ را هیچ‌جا
+    نمی‌دید — با اینکه متن تأییدیه می‌گفت «پاسخ از همین بخش پیگیری
+    می‌شود». این مسیر همان «همین بخش» است.
+    """
+    rows = (
+        db.query(SupportMessage)
+        .filter(SupportMessage.user_id == user.id)
+        .order_by(SupportMessage.id.desc())
+        .limit(100)
+        .all()
+    )
+    items = [
+        {
+            "id": t.id,
+            "subject": t.subject or "",
+            "message": t.message or "",
+            "answer": t.answer or "",
+            "status": t.status or "new",
+            "status_fa": "پاسخ داده شد" if (t.status or "") == "answered" else "در انتظار پاسخ",
+            "created_at": t.created_at.isoformat(sep=" ", timespec="seconds") if t.created_at else "",
+            "answered_at": (
+                t.answered_at.isoformat(sep=" ", timespec="seconds") if t.answered_at else ""
+            ),
+        }
+        for t in rows
+    ]
+    return {"items": items, "total": len(items)}

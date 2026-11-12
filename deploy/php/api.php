@@ -260,6 +260,37 @@ switch ($action) {
             'message' => 'پیام شما ثبت شد. پاسخ از همین بخش پیگیری می‌شود.',
         ), 201);
 
+    case 'my-tickets':
+        /*
+         * پیام‌های خودِ کاربر.
+         *
+         * بدون این، کاربر پیامی می‌فرستاد که «پاسخ از همین بخش پیگیری
+         * می‌شود» — و هیچ بخشی برای دیدن پاسخ وجود نداشت. پاسخ در
+         * پنل مدیریت نوشته می‌شد و همان‌جا می‌ماند. کاربر فکر می‌کرد
+         * پشتیبانی جواب نداده.
+         */
+        $user = api_require_user();
+        $uid = (int) $user['id'];
+        $items = array();
+        foreach (fk_where('tickets', static function (array $t) use ($uid): bool {
+            return (int) ($t['user_id'] ?? 0) === $uid;
+        }) as $t) {
+            $items[] = array(
+                'id' => (int) $t['id'],
+                'subject' => (string) ($t['subject'] ?? ''),
+                'message' => (string) ($t['message'] ?? ''),
+                'answer' => (string) ($t['answer'] ?? ''),
+                'status' => (string) ($t['status'] ?? 'new'),
+                'status_fa' => ((string) ($t['status'] ?? '') === 'answered' ? 'پاسخ داده شد' : 'در انتظار پاسخ'),
+                'created_at' => (string) ($t['created_at'] ?? ''),
+                'answered_at' => (string) ($t['answered_at'] ?? ''),
+            );
+        }
+        usort($items, static function (array $a, array $b): int {
+            return (int) $b['id'] <=> (int) $a['id'];
+        });
+        api_out(array('items' => $items, 'total' => count($items)));
+
     /* ════════════════ ثبت‌نام و ورود ════════════════ */
 
     case 'register':

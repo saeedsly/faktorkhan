@@ -84,6 +84,7 @@ const MAP = {
   "/api/invoices/fix-numbers": "invoice-fix-numbers",
 
   "/api/ocr/capabilities": "ocr-capabilities",
+  "/api/system/my-tickets": "my-tickets",
   "/api/ocr/upload": "ocr-upload",
   "/api/ocr/link": "ocr-link",
   "/api/ocr/jobs": "ocr-jobs",

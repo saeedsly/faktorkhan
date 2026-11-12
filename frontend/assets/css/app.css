@@ -560,6 +560,23 @@ html[data-theme="light"] .copy-box { background: #eef2f9; }
 .items-center { align-items: center; } .justify-between { justify-content: space-between; } .wrap { flex-wrap: wrap; }
 .badge-count { font-size: 10px; padding: 1px 6px; border-radius: 20px; background: rgba(248, 113, 113, .16); color: var(--red); margin-inline-start: 6px; }
 
+/* ── پیام‌های پشتیبانی (نمای کاربر) ── */
+.ticket-list { display: grid; gap: 10px; }
+.ticket { padding: 12px 13px; border-radius: 12px; border: 1px solid var(--stroke);
+  background: var(--panel-2); display: grid; gap: 6px; }
+.ticket.answered { border-color: rgba(45, 212, 191, .35); }
+.ticket .tk-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ticket .tk-head strong { font-size: 12.5px; }
+.ticket .tk-msg { font-size: 11.5px; color: var(--text-2); line-height: 1.9; margin: 0;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ticket .tk-answer { margin-top: 4px; padding: 9px 11px; border-radius: 10px;
+  background: rgba(45, 212, 191, .08); border-inline-start: 2px solid var(--teal); }
+.ticket .tk-answer p { margin: 3px 0 0; font-size: 11.5px; line-height: 1.9; color: var(--text-1); }
+.ticket .tk-date { font-size: 10px; color: var(--text-3); }
+.badge { font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+.badge.ok { background: rgba(45, 212, 191, .14); color: var(--teal); }
+.badge.warn { background: rgba(212, 175, 55, .14); color: var(--gold); }
+
 /* ══════════════ واکنش‌گرا ══════════════ */
 @media (max-width: 1180px) {
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }

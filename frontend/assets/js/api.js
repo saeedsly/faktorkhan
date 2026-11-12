@@ -188,6 +188,8 @@ const API = (() => {
     features: () => request("/api/system/features"),
     health: () => request("/api/system/health"),
     support: (payload) => request("/api/system/support", { method: "POST", body: payload }),
+    /* پیام‌های خودِ کاربر — تا پاسخ پشتیبانی را ببیند، نه فقط بفرستد */
+    myTickets: () => request("/api/system/my-tickets"),
 
     /* --- مدیر --- */
     admin: {

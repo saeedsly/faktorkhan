@@ -235,6 +235,11 @@ Object.assign(Views, (() => {
     const meta = State.meta || (State.meta = await API.meta());
     const owner = meta.owner || {};
     const contact = owner.contact || {};
+    /* پیام‌های قبلی این کاربر: بدون این، پاسخ پشتیبانی هیچ‌جا دیده
+       نمی‌شد و کاربر فکر می‌کرد جوابی نیامده. خطا هم بی‌صدا رد می‌شود
+       تا نبودِ آن، کل صفحهٔ پشتیبانی را خراب نکند. */
+    let tickets = { items: [], total: 0 };
+    try { tickets = await API.myTickets(); } catch { /* بی‌صدا */ }
 
     el.innerHTML = `
       <div class="card card-glow mb-12">
@@ -257,6 +262,20 @@ Object.assign(Views, (() => {
 
       <div class="dash-grid">
         <div class="dash-col">
+          ${(tickets.items || []).length ? `<div class="card">
+            <div class="card-h"><h3><svg class="ic"><use href="#i-clock"/></svg>پیام‌های من</h3>
+              <span class="hint">${num(tickets.total)} مورد</span></div>
+            <div class="ticket-list">${tickets.items.map((t) => `
+              <div class="ticket ${t.status === "answered" ? "answered" : ""}">
+                <div class="tk-head">
+                  <strong>${esc(t.subject)}</strong>
+                  <span class="badge ${t.status === "answered" ? "ok" : "warn"}">${esc(t.status_fa)}</span>
+                </div>
+                <p class="tk-msg">${esc(t.message)}</p>
+                ${t.answer ? `<div class="tk-answer"><span class="h-eyebrow">پاسخ پشتیبانی</span><p>${esc(t.answer)}</p></div>` : ""}
+                <span class="tk-date">${esc(t.created_at || "")}</span>
+              </div>`).join("")}</div>
+          </div>` : ""}
           <div class="card">
             <div class="card-h"><h3><svg class="ic"><use href="#i-support"/></svg>ارسال پیام به پشتیبانی</h3></div>
             <p class="hint mb-12">${esc(owner.support_note || "")}</p>
@@ -300,6 +319,8 @@ Object.assign(Views, (() => {
         UI.setBusy(e.currentTarget, false);
         toast(res.message, { type: "success" });
         $("#t-subject", el).value = ""; $("#t-message", el).value = "";
+        /* پیام تازه بلافاصله در فهرست دیده شود */
+        support(el);
       } catch (err) { UI.setBusy(e.currentTarget, false); toast(err.message, { type: "error" }); }
     };
     $("#copy-copyright", el).onclick = () => copy(meta.copyright || "", "متن حق معنوی کپی شد");
