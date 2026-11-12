@@ -748,6 +748,24 @@ switch ($action) {
         $credit = api_cloud_credit();
         api_out($credit);
 
+    case 'ocr-cleanup':
+        /* همان /api/ocr/cleanup پایتون: فایل‌های آپلودشدهٔ کاربر پاک
+           می‌شوند ولی خودِ کار و متن خوانده‌شده می‌ماند. رابط فعلی این
+           مسیر را صدا نمی‌زند، ولی برای هم‌ترازی با پایتون هست. */
+        $user = api_require_user();
+        $removed = 0;
+        $mine = fk_where('jobs', static function (array $j) use ($user): bool {
+            return (int) ($j['user_id'] ?? 0) === (int) $user['id'];
+        });
+        foreach ($mine as $j) {
+            /* اگر فایلی داشت، پاک شد — بشمار */
+            if ((string) ($j['saved'] ?? '') !== '' || (string) ($j['txt_file'] ?? '') !== '') {
+                $removed++;
+            }
+            job_delete_files($j);
+        }
+        api_out(array('ok' => true, 'removed' => $removed));
+
     case 'ocr-file':
         $user = api_require_user();
         $job = api_owned_job($user, api_str('id'));
