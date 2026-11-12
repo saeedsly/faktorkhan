@@ -330,6 +330,17 @@ SEC("۷) فهم اقلام و اصلاح اعداد");
 
   const empty = await second.call({ method: "POST", action: "invoice-understand", json: { text: "سلام" } });
   ck("متن بی‌قلم رد می‌شود", empty.data && empty.data.detail && String(empty.data.detail).includes("قلم"));
+
+  /* شمارهٔ دو رقمی با رقم فارسی — نسخهٔ PHP قبلاً «۸۸» را از دست
+     می‌داد (حداقل ۳ نویسه) ولی parser.py آن را ۸۸ می‌خواند. */
+  const short = await second.call({ method: "POST", action: "invoice-understand", json: {
+    text: "فروشگاه آفتاب\nشماره فاکتور: ۸۸\nشرح\tتعداد\tقیمت\tمبلغ\nکاغذ\t3\t200,000\t600,000\nجمع کل: 600,000",
+  } });
+  ck("شمارهٔ دو رقمی فارسی", short.data && short.data.parsed.number === "88",
+     String(short.data && short.data.parsed.number));
+  ck("همان نتیجهٔ پایتون (فروشنده/جمع)",
+     short.data && short.data.parsed.seller_name === "آفتاب" && short.data.items_sum === 600000,
+     `${short.data && short.data.parsed.seller_name} / ${short.data && short.data.items_sum}`);
 }
 
 /* ═════════════════ ۸) حذف و خروج ═════════════════ */

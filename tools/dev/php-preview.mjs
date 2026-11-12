@@ -49,15 +49,25 @@ const PHP_FILES = [
   "api_helpers.php", "api.php", "index.php", "legacy.php",
 ];
 
-const src = {};
-for (const n of PHP_FILES) {
-  src[n] = patch(fs.readFileSync(`${SRC}/${n}`, "utf8"));
+/**
+ * فایل‌های PHP را در هر درخواست از دیسک می‌خوانیم، نه یک بار در
+ * شروع. دلیلش تجربهٔ همین امروز است: بعد از اصلاح api.php، پیش‌نمایش
+ * هنوز رفتار قدیمی داشت (دکمهٔ ثبت فاکتور فهرست برمی‌گرداند) و
+ * به‌نظر می‌رسید کد درست نیست. کش‌کردن منبع در حافظه فقط وقت توسعه
+ * را تلف می‌کند؛ خواندن ۹ فایل کوچک هزینه‌ای ندارد.
+ */
+function loadSources() {
+  const out = {};
+  for (const n of PHP_FILES) {
+    out[n] = patch(fs.readFileSync(`${SRC}/${n}`, "utf8"));
+  }
+  /* php-wasm بدنهٔ درخواست را در php://input نمی‌گذارد */
+  out["api.php"] = out["api.php"].replace(
+    /@file_get_contents\('php:\/\/input'\)/g,
+    "@file_get_contents('/tmp/fkpv/body.json')"
+  );
+  return out;
 }
-/* php-wasm بدنهٔ درخواست را در php://input نمی‌گذارد */
-src["api.php"] = src["api.php"].replace(
-  /@file_get_contents\('php:\/\/input'\)/g,
-  "@file_get_contents('/tmp/fkpv/body.json')"
-);
 
 let state = {};
 
@@ -68,14 +78,16 @@ let state = {};
  * می‌داد در حالی که روی هاست واقعی رابط تازه سرو می‌شود.
  */
 const webDir = path.join(SRC, "web");
-const webFiles = {};
-if (fs.existsSync(webDir)) {
+function loadWebIndex() {
+  const out = {};
+  if (!fs.existsSync(webDir)) return out;
   /* فقط index.html داخل ماشین لازم است (index.php وجودش را بررسی
      می‌کند). JS/CSS/فونت از دیسک و از طریق serveStatic سرو می‌شوند؛
      کپی کردن ۵۴۰ کیلوبایت باینری در هر درخواست، هم کند است و هم
      فونت را خراب می‌کند. */
   const idx = path.join(webDir, "index.html");
-  if (fs.existsSync(idx)) webFiles["web/index.html"] = fs.readFileSync(idx, "utf8");
+  if (fs.existsSync(idx)) out["web/index.html"] = fs.readFileSync(idx, "utf8");
+  return out;
 }
 
 const STUBS = `<?php
@@ -116,6 +128,7 @@ const STATIC_TYPES = {
 };
 
 async function runPhp({ entry, method, get, post, body, cookie, files = null }) {
+  const src = loadSources();
   const php = new PhpNode();
   await new Promise(r => php.addEventListener("ready", r));
   let out = "";
@@ -139,7 +152,7 @@ ini_set('display_errors','1'); error_reporting(E_ALL & ~E_DEPRECATED & ~E_WARNIN
 ${Object.entries(src).map(([n, c]) =>
   `@file_put_contents('${ROOT}/${n}', base64_decode('${B(c)}'));`).join("\n")}
 @file_put_contents('${ROOT}/stubs.php', base64_decode('${B(STUBS)}'));
-${Object.entries(webFiles).map(([n, c]) =>
+${Object.entries(loadWebIndex()).map(([n, c]) =>
   `@mkdir('${ROOT}/' . dirname(${JSON.stringify(n)}), 0777, true); @file_put_contents('${ROOT}/${n}', base64_decode('${B(c)}'));`).join("\n")}
 ${seed}
 @file_put_contents('${ROOT}/body.json', base64_decode('${B(body || "")}'));
