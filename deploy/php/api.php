@@ -155,6 +155,26 @@ function api_rate_clear(string $bucket): void
     @unlink(fk_state_dir() . '/rate-' . preg_replace('/[^a-z0-9_-]/', '', $bucket) . '-' . md5(fk_ip()) . '.json');
 }
 
+/**
+ * متد HTTP جاری.
+ *
+ * چرا این تابع لازم شد؟ چون رابط، همان قرارداد REST نسخهٔ پایتون را
+ * صدا می‌زند: `POST /api/invoices` برای ساخت، `GET /api/invoices` برای
+ * فهرست. api.php قبلاً فقط به action نگاه می‌کرد؛ نتیجه این بود که
+ * «دکمهٔ ثبت فاکتور» تازه، به‌جای ساختن، فهرست را برمی‌گرداند و صفحه
+ * بی‌صدا چیزی نشان نمی‌داد. همین برای طرح‌ها و کاربران هم بود.
+ */
+function api_method(): string
+{
+    return strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+}
+
+/** آیا درخواست از نوع نوشتن است؟ */
+function api_is_write(): bool
+{
+    return in_array(api_method(), array('POST', 'PUT', 'PATCH', 'DELETE'), true);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
@@ -757,6 +777,14 @@ switch ($action) {
 
     case 'invoices':
         $user = api_require_user();
+        if (api_method() === 'POST') {
+            /* همان POST /api/invoices نسخهٔ پایتون */
+            api_quota_guard($user);
+            $created = api_invoice_create($user, api_json(), null);
+            $dupOf = $created['duplicate_of'] ?? null;
+            unset($created['duplicate_of']);
+            api_out(array('invoice' => $created, 'duplicate_of' => $dupOf), 201);
+        }
         api_out(api_invoice_list($user));
 
     case 'invoice':
@@ -863,19 +891,33 @@ switch ($action) {
 
     case 'admin-user':
         $admin = api_require_admin();
-        api_out(api_admin_user($admin, api_int('id'), api_json()));
+        $userId = api_int('id');
+        $payload = api_json();
+        if (api_method() === 'DELETE') {
+            $payload['delete'] = true;
+        }
+        api_out(api_admin_user($admin, $userId, $payload));
 
     case 'admin-user-reset':
         $admin = api_require_admin();
         api_out(api_admin_reset_password($admin, api_int('id')));
 
     case 'admin-plans':
-        api_require_admin();
+        $admin = api_require_admin();
+        if (api_method() === 'POST') {
+            api_out(api_admin_plan($admin, 0, api_json()), 201);
+        }
         api_out(api_admin_plans());
 
     case 'admin-plan':
         $admin = api_require_admin();
-        api_out(api_admin_plan($admin, api_int('id'), api_json()));
+        $planId = api_int('id');
+        $payload = api_json();
+        /* DELETE یا {"delete":true} → حذف؛ بقیه → ساخت/ویرایش */
+        if (api_method() === 'DELETE') {
+            $payload['delete'] = true;
+        }
+        api_out(api_admin_plan($admin, $planId, $payload));
 
     case 'admin-keys':
         api_require_admin();
@@ -892,7 +934,9 @@ switch ($action) {
     case 'admin-key':
         $admin = api_require_admin();
         $payload = api_json();
-        api_out(api_admin_key_action($admin, api_int('id'), !empty($payload['delete']) ? 'delete' : 'revoke'));
+        /* DELETE /api/admin/keys/{id} نسخهٔ پایتون یعنی «حذف»، نه «لغو» */
+        $hard = api_method() === 'DELETE' || !empty($payload['delete']);
+        api_out(api_admin_key_action($admin, api_int('id'), $hard ? 'delete' : 'revoke'));
 
     case 'admin-cloud':
         api_require_admin();
@@ -936,7 +980,7 @@ switch ($action) {
 
     case 'admin-settings':
         $admin = api_require_admin();
-        if ($_SERVER['REQUEST_METHOD'] === 'PUT' || $_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (api_is_write()) {
             $payload = api_json();
             $defaults = fk_cfg_defaults();
             $changed = array();

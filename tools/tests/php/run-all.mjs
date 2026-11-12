@@ -30,6 +30,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ORDER = [
   ["lint.mjs",      "نحو همهٔ فایل‌های PHP"],
   ["panel.mjs",     "پنل کامل: کاربران، اشتراک، پنل مدیریت"],
+  ["shape.mjs",     "هم‌شکلی پاسخ‌ها با رابط"],
   ["shell.mjs",     "پوستهٔ SPA و دارایی‌های رابط"],
   ["reap.mjs",      "بستن کارهای نیمه‌کاره"],
   ["loginlim.mjs",  "محدودیت تلاش ورود"],

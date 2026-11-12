@@ -1446,7 +1446,15 @@ function api_admin_keys_create(array $admin, array $payload): array
         }
     }
     fk_audit($admin, 'key_create', 'license', (string) count($keys), 'ساخت ' . count($keys) . ' کد برای ' . (string) $plan['name']);
-    return array('ok' => true, 'keys' => $keys, 'count' => count($keys));
+    /* همان شکل نسخهٔ پایتون: رابط به created و file_hint تکیه می‌کند */
+    return array(
+        'ok' => true,
+        'created' => count($keys),
+        'count' => count($keys),
+        'plan' => (string) $plan['name'],
+        'keys' => $keys,
+        'file_hint' => 'این کدها فقط یک‌بار نمایش داده می‌شوند؛ همین حالا ذخیره یا کپی کنید.',
+    );
 }
 
 function api_admin_key_action(array $admin, int $id, string $action): array

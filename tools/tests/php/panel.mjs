@@ -347,6 +347,73 @@ SEC("۸) حذف فاکتور و خروج از حساب");
   ck("پس از خروج نشست بسته است", me.data && me.data.detail, me.text.slice(0, 60));
 }
 
+/* ═════════════════ ۹) قرارداد REST رابط ═════════════════ */
+
+SEC("۹) متد HTTP — همان چیزی که رابط صدا می‌زند");
+{
+  /* این بخش دقیقاً همان جفت‌های متد+اکشن است که در app.js نوشته شده.
+     اگر router متد را نبیند، دکمهٔ «ثبت فاکتور» فقط فهرست را برمی‌گرداند
+     و کاربر فکر می‌کند ذخیره نشد. */
+  const a = srv.session();
+  const rest = await a.register("rest@test.local");
+  ck("ساخت حساب کاربری برای تست رست", rest.data?.user?.is_admin === false);
+
+  const invPost = await a.call({
+    method: "POST", action: "invoices",
+    json: { number: "REST-1", seller_name: "فروشندهٔ رست", items: [{ description: "کالا", qty: 1, unit_price: 5000 }] },
+  });
+  ck("POST invoices می‌سازد (نه فهرست)",
+     !!(invPost.data && invPost.data.invoice && invPost.data.invoice.id), invPost.text.slice(0, 90));
+  const restId = invPost.data?.invoice?.id || 0;
+
+  const invGet = await a.call({ action: "invoices" });
+  ck("GET invoices فهرست می‌دهد", !!(invGet.data && Array.isArray(invGet.data.items) && invGet.data.total === 1),
+     `total=${invGet.data && invGet.data.total}`);
+
+  const invDel = await a.call({ method: "POST", action: "invoice-delete", query: { id: restId } });
+  ck("POST invoice-delete", !!(invDel.data && invDel.data.ok));
+
+  /* طرح: POST برای ساخت، PUT برای ویرایش، DELETE برای حذف */
+  const planPost = await owner.call({ method: "POST", action: "admin-plans",
+    json: { code: "rest-plan", name: "طرح رست", price: 1000, duration_days: 30, page_quota: 10 } });
+  const planId = planPost.data?.plan?.id || 0;
+  ck("POST admin-plans می‌سازد", planId > 0, planPost.text.slice(0, 80));
+
+  const planPut = await owner.call({ method: "PUT", action: "admin-plan", query: { id: planId },
+    json: { name: "طرح رست ویرایش" } });
+  ck("PUT admin-plan ویرایش می‌کند", !!(planPut.data && planPut.data.plan && planPut.data.plan.name.includes("ویرایش")),
+     JSON.stringify(planPut.data).slice(0, 80));
+
+  const planDel = await owner.call({ method: "DELETE", action: "admin-plan", query: { id: planId } });
+  ck("DELETE admin-plan حذف می‌کند", !!(planDel.data && planDel.data.ok));
+
+  /* کاربر: PATCH ویرایش، DELETE حذف */
+  const mk = await srv.request({ method: "POST", action: "register",
+    json: { full_name: "کاربر رست", email: "rest2@test.local", password: "Test@12345" } });
+  const uid = mk.data?.user?.id || 0;
+  /* قرارداد پایتون: PATCH فقط نقش و فعال‌بودن را عوض می‌کند
+     (نام/شرکت از مسیر profile خود کاربر می‌آید، نه پنل مدیر) */
+  const userPatch = await owner.call({ method: "PATCH", action: "admin-user", query: { id: uid },
+    json: { role: "admin" } });
+  ck("PATCH admin-user نقش را عوض می‌کند",
+     !!(userPatch.data && userPatch.data.user && userPatch.data.user.role === "admin"),
+     JSON.stringify(userPatch.data).slice(0, 80));
+
+  const userDel = await owner.call({ method: "DELETE", action: "admin-user", query: { id: uid } });
+  ck("DELETE admin-user حذف می‌کند", !!(userDel.data && userDel.data.ok));
+
+  /* کد اشتراک: DELETE یعنی «حذف»، نه «لغو» */
+  const k = await owner.call({ method: "POST", action: "admin-keys-create",
+    json: { plan_id: 2, count: 1 } });
+  ck("ساخت کد با شکل پایتون", !!(k.data && k.data.created === 1 && Array.isArray(k.data.keys)
+     && typeof k.data.file_hint === "string"), JSON.stringify(k.data).slice(0, 110));
+
+  /* تنظیمات: PUT ذخیره */
+  const sPut = await owner.call({ method: "PUT", action: "admin-settings", json: { trial_days: "30" } });
+  ck("PUT admin-settings ذخیره می‌کند", !!(sPut.data && sPut.data.settings && sPut.data.settings.trial_days === "30"),
+     sPut.text.slice(0, 80));
+}
+
 console.log("\n" + "═".repeat(64));
 console.log(fails === 0 ? `✓ همهٔ ${checks} بررسی موفق` : `✗ ${fails} از ${checks} بررسی ناموفق`);
 console.log("═".repeat(64));
