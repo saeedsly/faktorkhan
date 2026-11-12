@@ -163,6 +163,22 @@ function patchPaths(js) {
     js = js.split(from).join(to);
   }
 
+  /* ۱.۵) قالب کوئری.
+     qs() در api.js همیشه با «؟» شروع می‌شود، چون مسیر پایتون
+     /api/invoices بود و پارامترها بعد از آن می‌آمدند. حالا مسیر خودش
+     «؟» دارد (./api.php?action=invoices)؛ اگر qs هم «؟» بدهد، نتیجه
+     می‌شود ./api.php?action=invoices?per_page=6 و PHP کل آن را
+     action می‌خواند. علامتش هم بی‌صدا است: صفحه فقط خالی می‌شود.
+     پس qs را به «&» تغییر می‌دهیم — همان نتیجه، بدون «؟» دوم. */
+  js = js.replace(
+    '    const s = params.toString();\n    return s ? `?${s}` : "";',
+    '    const s = params.toString();\n    return s ? `&${s}` : "";'
+  );
+  js = js.replace(
+    'const qs = (obj) => {\n    const params = new URLSearchParams();',
+    'const qs = (obj) => {\n    const params = new URLSearchParams();'
+  );
+
   /* ۲) توکن: بک‌اند PHP به‌جای Bearer از کوکی نشست استفاده می‌کند.
         اما iframe/هندلرها بعضی‌وقت کوکی را نگه نمی‌دارند؛ با یک توکن
         «نشانه» در هدر هم پشتیبانی می‌کنیم تا رابط بی‌تغییر بماند. */

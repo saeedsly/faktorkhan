@@ -272,7 +272,7 @@ const API = (() => {
       if (v !== undefined && v !== null && v !== "") params.set(k, v);
     });
     const s = params.toString();
-    return s ? `?${s}` : "";
+    return s ? `&${s}` : "";
   };
 
   return {
