@@ -46,42 +46,36 @@ header('Cache-Control: no-store, must-revalidate');
    قدیمیِ کش‌شده را نشان ندهد. این همان باگ «بعد از آپدیت صفحه سفید/قدیمی
    است» است که یک‌بار خیلی وقت گرفت. */
 /* ── نسخهٔ دارایی ──
-   اگر فایل را عوض کنید اما ?v همان بماند، مرورگر نسخهٔ کش‌شده را
-   نشان می‌دهد و کاربر می‌گوید «هنوز خراب است». پس نسخه باید با تغییر
-   محتوا عوض شود.
+   ?v روی CSS و JS می‌نشیند تا مرورگر بعد از آپدیت، نسخهٔ کش‌شده را
+   نشان ندهد. اگر نسخه عوض نشود، کاربر «هنوز خراب است» می‌بیند — این
+   دقیقاً همان چیزی است که یک‌بار کل استایل را از بین برد.
 
-   ترتیب انتخاب:
-     ۱) زمان تغییر فایل‌ها — سریع و دقیق. اگر app.js و app.css هر دو
-        filemtime بدهند، همین کافی است.
-     ۲) اثرانگشت محتوا — برای هاست‌هایی (و شبیه‌ساز php-wasm) که
-        filemtime عدد نمی‌دهد. گران است، پس یک بار محاسبه و در
-        fk-data/.asset-version ذخیره می‌شود؛ کلید کش شامل حجم
-        فایل‌هاست تا بازسازی فایل، کلید را عوض کند. */
-$assetVersion = '';
+   ⚠️ سه تلاش برای این کار شکست خورد و همه یک درس داشتند:
+     ۱) filemtime → در بعضی محیط‌ها (و شبیه‌ساز php-wasm) عدد درست
+        نمی‌دهد.
+     ۲) حجم فایل → ویرایشی که حجم را عوض نکند، همان نسخه را می‌دهد.
+     ۳) کش‌کردن هش در fk-data → روی هاست واقعی خوب بود، ولی هر لایهٔ
+        کش خودش می‌تواند کهنه بماند و همان باگ را برگرداند.
+
+   پس: بدون کش. یک md5 روی دو فایل چند صد کیلوبایتی، روی هر درخواست،
+   هزینه‌اش چند میلی‌ثانیه است و در عوض هرگز کهنه نمی‌ماند. */
 $jsFile = __DIR__ . '/web/app.js';
 $cssFile = __DIR__ . '/web/app.css';
-$jsTime = @filemtime($jsFile);
-$cssTime = @filemtime($cssFile);
-
-if ($jsTime && $cssTime) {
-    $assetVersion = substr(md5($jsTime . '|' . $cssTime), 0, 8);
+$assetVersion = '';
+/* hash_file روی بعضی فایل‌سیستم‌ها (از جمله شبیه‌ساز) رشتهٔ خالی
+   می‌دهد؛ در آن حالت خودمان محتوا را می‌خوانیم و هش می‌کنیم. */
+$jsHash = @hash_file('md5', $jsFile);
+if (!is_string($jsHash) || $jsHash === '') {
+    $jsRaw = @file_get_contents($jsFile);
+    $jsHash = is_string($jsRaw) && $jsRaw !== '' ? md5($jsRaw) : '';
+}
+if (is_string($jsHash) && $jsHash !== '') {
+    $assetVersion = substr($jsHash, 0, 8);
 } else {
-    /* کلید کش: حجم فایل‌ها؛ اگر فایل بازسازی شود حجم عوض می‌شود و
-       اثرانگشت تازه محاسبه می‌شود. */
-    $key = (int) @filesize($jsFile) . 'x' . (int) @filesize($cssFile);
-    $stampFile = __DIR__ . '/fk-data/.asset-version';
-    $cached = array();
-    if (is_file($stampFile)) {
-        $cached = (array) @json_decode((string) @file_get_contents($stampFile), true);
-    }
-    if (isset($cached['key'], $cached['v']) && $cached['key'] === $key && is_string($cached['v'])) {
-        $assetVersion = $cached['v'];
-    } else {
-        $assetVersion = substr(md5($key . '|' . (string) @hash_file('md5', $jsFile) . '|' . (string) @hash_file('md5', $cssFile)), 0, 8);
-        if (is_dir(__DIR__ . '/fk-data') || @mkdir(__DIR__ . '/fk-data', 0775, true)) {
-            @file_put_contents($stampFile, json_encode(array('key' => $key, 'v' => $assetVersion)), LOCK_EX);
-        }
-    }
+    /* اگر خواندن فایل ممکن نشد، حداکثر تلاش: زمان تغییر */
+    $jsTime = @filemtime($jsFile);
+    $cssTime = @filemtime($cssFile);
+    $assetVersion = ($jsTime || $cssTime) ? substr(md5((string) $jsTime . '|' . (string) $cssTime), 0, 8) : '';
 }
 if ($assetVersion === '') {
     $assetVersion = '1';

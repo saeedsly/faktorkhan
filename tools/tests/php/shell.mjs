@@ -18,6 +18,7 @@
 import { PhpNode } from "php-wasm/PhpNode.mjs";
 import fs from "fs";
 import path from "path";
+import crypto from "node:crypto";
 
 const SRC = new URL("../../../deploy/php", import.meta.url).pathname;
 const WEB = path.join(SRC, "web");
@@ -81,6 +82,11 @@ console.log("\n۵) index.php واقعاً پوسته را سرو می‌کند")
   await php.run('<?php @mkdir("/tmp/fkshell/web", 0777, true);'
     + '@mkdir("/tmp/fkshell/fk-sessions", 0777, true);');
   php.writeFile("/tmp/fkshell/web/index.html", html);
+  /* index.php برای ساختن ?v هش محتوای app.js را می‌خواند. اگر فایل
+     نباشد، به «۱» برمی‌گردد و آزمون نمی‌تواند کش‌شکن را بسنجد — همان
+     چیزی که در پیش‌نمایش هم رخ داد. */
+  php.writeFile("/tmp/fkshell/web/app.js", fs.readFileSync(path.join(WEB, "app.js")));
+  php.writeFile("/tmp/fkshell/web/app.css", fs.readFileSync(path.join(WEB, "app.css")));
   /* lib.php و data.php را هم لازم دارد */
   for (const n of ["lib.php", "engine.php", "data.php"]) {
     const c = fs.readFileSync(path.join(SRC, n), "utf8")
@@ -109,6 +115,21 @@ echo ob_get_clean();
   ck("متای نسخه", /<meta name="fk-version" content="[^"]+">/.test(out));
   ck("کش‌شکن روی app.js", /app\.js\?v=[0-9a-f]+/.test(out));
   ck("کش‌شکن روی app.css", /app\.css\?v=[0-9a-f]+/.test(out));
+
+  /* ── رگرسیون: نسخه باید *واقعاً* با محتوا عوض شود ──
+     سه تلاش برای این کار شکست خورد: filemtime (عدد نمی‌دهد)، حجم فایل
+     (ویرایش هم‌حجم را نمی‌بیند)، و کش در fk-data (خودش کهنه شد).
+     آزمون باید هش واقعی فایل را با ?v مقایسه کند، نه فقط «عدد است». */
+  const m = out.match(/app\.js\?v=([0-9a-f]+)/);
+  const servedVersion = m ? m[1] : "";
+  const realHash = crypto.createHash("md5")
+    .update(fs.readFileSync(path.join(WEB, "app.js"))).digest("hex").slice(0, 8);
+  ck("?v از هش محتوای app.js می‌آید", servedVersion === realHash,
+     `سرور ${servedVersion || "—"}، واقعی ${realHash}`);
+  ck("?v روی هر دو فایل یکسان است",
+     (out.match(/app\.js\?v=([0-9a-f]+)/) || [])[1]
+       === (out.match(/app\.css\?v=([0-9a-f]+)/) || [])[1]);
+  ck("?v عدد ثابت «۱» نیست", servedVersion !== "1" && servedVersion !== "");
   ck("متای موتور قبل از </head>",
      out.indexOf('name="fk-engine"') < out.indexOf("</head>"));
 

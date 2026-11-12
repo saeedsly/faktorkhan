@@ -78,15 +78,28 @@ let state = {};
  * می‌داد در حالی که روی هاست واقعی رابط تازه سرو می‌شود.
  */
 const webDir = path.join(SRC, "web");
-function loadWebIndex() {
+
+/**
+ * فایل‌های web/ که داخل ماشین PHP لازم‌اند.
+ *
+ * index.php برای ساختن ?v هش *محتوا*ی app.js را می‌خواند. اگر فقط
+ * index.html را کپی کنیم، hash_file رشتهٔ خالی می‌دهد و ?v همیشه «۱»
+ * می‌شود — یعنی پیش‌نمایش رفتار تولید را نشان نمی‌دهد و هر بار تغییر
+ * CSS، مرورگر نسخهٔ قبلی را نگه می‌دارد. این باگ یک‌بار مرا به اشتباه
+ * انداخت («اصلاح اعمال نشد»).
+ *
+ * فونت‌ها (۵۰۰ کیلوبایت باینری) عمداً کپی نمی‌شوند: serveStatic از
+ * دیسک سرو می‌کند و کپی base64 در هر درخواست هم کند است و هم بایت‌ها
+ * را خراب می‌کند.
+ */
+function loadWebFiles() {
   const out = {};
   if (!fs.existsSync(webDir)) return out;
-  /* فقط index.html داخل ماشین لازم است (index.php وجودش را بررسی
-     می‌کند). JS/CSS/فونت از دیسک و از طریق serveStatic سرو می‌شوند؛
-     کپی کردن ۵۴۰ کیلوبایت باینری در هر درخواست، هم کند است و هم
-     فونت را خراب می‌کند. */
-  const idx = path.join(webDir, "index.html");
-  if (fs.existsSync(idx)) out["web/index.html"] = fs.readFileSync(idx, "utf8");
+  for (const n of ["index.html", "app.js", "app.css"]) {
+    const f = path.join(webDir, n);
+    /* app.js/app.css متنی‌اند؛ خواندنشان با utf8 بایت را خراب نمی‌کند */
+    if (fs.existsSync(f)) out["web/" + n] = fs.readFileSync(f, "utf8");
+  }
   return out;
 }
 
@@ -149,11 +162,11 @@ async function runPhp({ entry, method, get, post, body, cookie, files = null }) 
 ini_set('display_errors','1'); error_reporting(E_ALL & ~E_DEPRECATED & ~E_WARNING & ~E_NOTICE);
 @mkdir('${ROOT}/fk-sessions',0777,true);@mkdir('${ROOT}/fk-jobs',0777,true);
 @mkdir('${ROOT}/fk-uploads',0777,true);@mkdir('${ROOT}/fk-invoices',0777,true);
-@mkdir('${ROOT}/fk-data',0777,true);
+@mkdir('${ROOT}/fk-data',0777,true);@mkdir('${ROOT}/web',0777,true);
 ${Object.entries(src).map(([n, c]) =>
   `@file_put_contents('${ROOT}/${n}', base64_decode('${B(c)}'));`).join("\n")}
 @file_put_contents('${ROOT}/stubs.php', base64_decode('${B(STUBS)}'));
-${Object.entries(loadWebIndex()).map(([n, c]) =>
+${Object.entries(loadWebFiles()).map(([n, c]) =>
   `@mkdir('${ROOT}/' . dirname(${JSON.stringify(n)}), 0777, true); @file_put_contents('${ROOT}/${n}', base64_decode('${B(c)}'));`).join("\n")}
 ${seed}
 @file_put_contents('${ROOT}/body.json', base64_decode('${B(body || "")}'));
