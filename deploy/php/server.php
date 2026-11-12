@@ -28,6 +28,18 @@ $path = realpath($root . $uri) ?: '';
 $name = basename($uri);
 $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
 
+/* ── پوشهٔ web/: فقط دارایی‌های رابط ───────────────────────── */
+if (strpos($uri, '/web/') === 0) {
+    $ok = preg_match('#^/web/(index\.html|app\.js|app\.css|assets/[A-Za-z0-9._/-]+\.(css|js|woff2?|ttf|svg|png|jpe?g|webp|ico))$#', $uri);
+    if (!$ok) {
+        http_response_code(403);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'دسترسی به این فایل مجاز نیست.';
+        return true;
+    }
+    return false;   /* بگذارید سرور داخلی خودش سرو کند */
+}
+
 if ($name === 'fk-config.json'
     || in_array($ext, array('log', 'ini', 'sql', 'md', 'bak', 'json', 'lock', 'txt'), true)
     || strpos($uri, '/fk-uploads/') === 0
