@@ -92,7 +92,10 @@ def list_invoices(
 ):
     query = _query_for(db, user)
     if q:
-        needle = f"%{q.strip()}%"
+        # جست‌وجو با ارقام فارسی: کاربر «فروشنده ۲» می‌نویسد، داده
+        # ASCII است. نسخهٔ PHP هم همین یکسان‌سازی را دارد.
+        from ..services.parser import DIGIT_MAP
+        needle = f"%{q.strip().translate(DIGIT_MAP)}%"
         query = query.filter(or_(
             Invoice.number.ilike(needle),
             Invoice.seller_name.ilike(needle),

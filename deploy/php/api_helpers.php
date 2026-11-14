@@ -652,7 +652,11 @@ function api_invoice_list(array $user): array
         return (int) ($inv['user_id'] ?? 0) === $uid;
     });
 
-    $needle = $q !== '' ? fk_text_lower($q) : '';
+    /* جست‌وجو با ارقام فارسی.
+       کاربر فارسی‌زبان «فروشنده ۲» می‌نویسد؛ شماره‌ها در پایگاه داده
+       ASCII‌اند. بدون یکسان‌سازی، جست‌وجو صفر نتیجه می‌داد و کاربر فکر
+       می‌کرد فاکتورش نیست. هر دو طرف نرمال می‌شوند. */
+    $needle = $q !== '' ? fk_text_lower(fk_digits_latin($q)) : '';
     $statuses = $status !== '' ? explode(',', $status) : array();
     $types = $type !== '' ? explode(',', $type) : array();
 
@@ -691,7 +695,7 @@ function api_invoice_list(array $user): array
             foreach ((array) ($inv['items'] ?? array()) as $it) {
                 $hay .= ' ' . (string) ($it['description'] ?? '');
             }
-            $hay = fk_text_lower($hay);
+            $hay = fk_text_lower(fk_digits_latin($hay));
             if (strpos($hay, $needle) === false) {
                 continue;
             }

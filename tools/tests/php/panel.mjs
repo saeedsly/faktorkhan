@@ -185,6 +185,19 @@ let invoiceId = 0;
   ck("در فهرست آمد", list.data && list.data.total === 1);
   ck("جمع کل در خلاصه", list.data && list.data.summary.sum_total === 3400000);
 
+  /* جست‌وجو با ارقام فارسی: کاربر فارسی‌زبان «۲» می‌نویسد، شماره‌ها
+     ASCII ذخیره می‌شوند. بدون یکسان‌سازی، نتیجه صفر بود و کاربر فکر
+     می‌کرد فاکتورش گم شده. */
+  /* شمارهٔ این فاکتور «۱۴۰۴۰۹-۱۱» با ارقام فارسی ذخیره شده. */
+  const faDigit = await second.call({ action: "invoices", query: { q: "۱۴۰۴۰۹" } });
+  const enDigit = await second.call({ action: "invoices", query: { q: "140409" } });
+  ck("جست‌وجو با شکل فارسی «۲»", faDigit.data && faDigit.data.total === 1,
+     `نتیجه ${faDigit.data && faDigit.data.total}`);
+  ck("جست‌وجو با شکل لاتین «2»", enDigit.data && enDigit.data.total === 1,
+     `نتیجه ${enDigit.data && enDigit.data.total}`);
+  ck("هر دو شکل یک نتیجه می‌دهند",
+     (faDigit.data && faDigit.data.total) === (enDigit.data && enDigit.data.total));
+
   const stats = await second.call({ action: "invoice-stats" });
   ck("آمار: تعداد ۱", stats.data && stats.data.counts.total === 1);
   ck("آمار: جمع ۳٬۴۰۰٬۰۰۰", stats.data && stats.data.sums.total === 3400000);
