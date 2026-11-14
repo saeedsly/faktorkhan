@@ -22,6 +22,8 @@ from ..security import decrypt_secret, encrypt_secret
 log = logging.getLogger("faktorkhan.cloud")
 
 TOKEN_KEY = "cloud_token"
+# نشانهٔ «مدیر توکن را عمداً پاک کرده» — جلوگیری از برگشت seed
+TOKEN_CLEARED_KEY = "cloud_token_cleared"
 MIME = {
     ".pdf": "application/pdf",
     ".jpg": "image/jpeg",
@@ -117,19 +119,31 @@ def save_cloud_token(token: str, actor_id: int | None = None) -> None:
             row.is_secret = True
         else:
             db.add(AppSetting(key=TOKEN_KEY, value=encrypt_secret(token), is_secret=True))
+        # حذف عمدی را ثبت کن تا seed دوباره توکن را برنگرداند
+        mark = db.query(AppSetting).filter(AppSetting.key == TOKEN_CLEARED_KEY).first()
+        if mark:
+            mark.value = "" if token else "1"
+        else:
+            db.add(AppSetting(key=TOKEN_CLEARED_KEY, value="" if token else "1"))
     log.info("cloud token updated by user %s", actor_id)
 
 
 def cloud_token() -> str:
-    """توکن ابری (رمزگشایی‌شده) — فقط برای استفاده داخلی."""
+    """توکن ابری (رمزگشایی‌شده) — فقط برای استفاده داخلی
+
+    اگر مدیر توکن را پاک کرده باشد (`TOKEN_CLEARED_KEY`)، دیگر از
+    `CLOUD_OCR_SEED_TOKEN` استفاده نمی‌شود. بدون این نشانه، دکمهٔ
+    «حذف توکن» روی نصب‌هایی که seed دارند بی‌اثر بود: توکن پاک می‌شد و
+    همان لحظه از متغیر محیطی برمی‌گشت — کاربر «حذف شد» می‌دید و
+    وضعیت همچنان «تنظیم‌شده» می‌ماند.
+    """
     encrypted = get_setting(TOKEN_KEY, "")
     token = decrypt_secret(encrypted) if encrypted else ""
-    if not token:
+    if not token and not get_setting(TOKEN_CLEARED_KEY, ""):
         token = settings.CLOUD_OCR_SEED_TOKEN
         if token:
             save_cloud_token(token)
     return token
-
 
 def token_state() -> dict:
     """وضعیت توکن برای نمایش در پنل مدیریت — بدون افشای مقدار."""

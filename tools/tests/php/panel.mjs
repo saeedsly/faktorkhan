@@ -425,6 +425,29 @@ SEC("۹) متد HTTP — همان چیزی که رابط صدا می‌زند");
      sPut.text.slice(0, 80));
 }
 
+console.log("\n۹) توکن ابری: ثبت و حذف");
+{
+  /* دکمهٔ «حذف توکن» در رابط هست. اگر مسیر حذف کار نکند، مدیر پس از
+     یک‌بار ثبت توکن برای همیشه گرفتارش می‌ماند — نه می‌تواند توکن را
+     عوض کند، نه سرویس را قطع کند. */
+  const set = await owner.call({ method: "POST", action: "admin-cloud-token",
+    json: { token: "z".repeat(32) } });
+  ck("ثبت توکن موفق", !!(set.data && set.data.ok), (set.data?.detail || "").slice(0, 50));
+  let st = await owner.call({ action: "admin-cloud" });
+  ck("وضعیت «تنظیم‌شده» شد", st.data?.token_set === true);
+  ck("طول توکن گزارش می‌شود", st.data?.token_length === 32, String(st.data?.token_length));
+  ck("مقدار توکن هرگز برنمی‌گردد", !JSON.stringify(st.data || {}).includes("zzzzzzzz"));
+
+  const bad = await owner.call({ method: "POST", action: "admin-cloud-token", json: { token: "short" } });
+  ck("توکن کوتاه رد می‌شود", /معتبر نیست/.test(bad.data?.detail || ""), (bad.data?.detail || "").slice(0, 40));
+
+  const clr = await owner.call({ method: "POST", action: "admin-cloud-token", json: { clear: true } });
+  ck("حذف توکن موفق", !!(clr.data && clr.data.ok), (clr.data?.detail || "").slice(0, 40));
+  st = await owner.call({ action: "admin-cloud" });
+  ck("بعد از حذف، توکن تنظیم‌نشده است", st.data?.token_set === false);
+  ck("طول صفر شد", st.data?.token_length === 0, String(st.data?.token_length));
+}
+
 console.log("\n" + "═".repeat(64));
 console.log(fails === 0 ? `✓ همهٔ ${checks} بررسی موفق` : `✗ ${fails} از ${checks} بررسی ناموفق`);
 console.log("═".repeat(64));

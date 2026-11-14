@@ -342,6 +342,20 @@ def set_cloud_token(payload: dict, request: Request, admin: User = Depends(requi
     return {"ok": True, "message": "توکن ذخیره شد. مقدار آن دیگر قابل مشاهده نیست."}
 
 
+@router.delete("/cloud/token")
+def clear_cloud_token(request: Request, admin: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    """حذف توکن ابری.
+
+    رابط دکمهٔ «حذف توکن» دارد و DELETE همین نشانی را صدا می‌زند، ولی
+    این مسیر وجود نداشت: دکمه در نسخهٔ پایتون ۴۰۵ می‌داد. حالا مثل
+    نسخهٔ PHP با clear کار می‌کند.
+    """
+    cloud_ocr.save_cloud_token("", admin.id)
+    audit(db, admin, "cloud_token_clear", "settings", "", "حذف توکن ابری", request)
+    return {"ok": True, "message": "توکن حذف شد."}
+
+
 @router.post("/cloud/test")
 def test_cloud(admin: User = Depends(require_admin)):
     try:
