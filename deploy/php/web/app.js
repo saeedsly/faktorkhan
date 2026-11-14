@@ -3206,9 +3206,16 @@ const App = (() => {
         State.user = res.user; State.sub = res.subscription;
         UI.setBusy(btn, false);
         await enterApp();
-        const warn = API.storageWarning();
-        if (warn) toast(warn, { type: "warn", title: "توجه" });
-        else toast(`خوش آمدید ${res.user.full_name || ""}`, { type: "success" });
+        /* اگر سقف دستگاه‌های این اشتراک پر شده باشد، سرور هشدار می‌فرستد.
+           ورود را نبسته‌ایم (کاربر باید بتواند وارد شود تا از «دستگاه‌های
+           من» جا آزاد کند)، پس این هشدار تنها جای گفتنش است. */
+        if (res.device_warning) {
+          toast(res.device_warning, { type: "warn", title: "محدودیت دستگاه" });
+        } else {
+          const warn = API.storageWarning();
+          if (warn) toast(warn, { type: "warn", title: "توجه" });
+          else toast(`خوش آمدید ${res.user.full_name || ""}`, { type: "success" });
+        }
       } catch (err) {
         UI.setBusy(btn, false);
         toast(err.message, { type: "error" });

@@ -365,12 +365,21 @@ switch ($action) {
             $license = $res['ok'] ? $res : array('error' => $res['message']);
         }
 
+        /* اولین دستگاه همان‌جا ثبت می‌شود؛ وگرنه کاربر تازه هم فهرست
+           خالی می‌دید و سقف دستگاه بی‌معنا بود. */
+        $deviceHeader = trim((string) ($_SERVER['HTTP_X_DEVICE_ID'] ?? ''));
+        $devWarn = fk_register_device(
+            $user,
+            trim((string) ($payload['device_id'] ?? $deviceHeader)),
+            trim((string) ($payload['platform'] ?? ''))
+        );
         fk_login_user($user);
         fk_audit($user, 'register', 'user', (int) $user['id'], 'ثبت‌نام کاربر جدید');
         $user = fk_row('users', (int) $user['id']) ?? $user;
         api_out(array(
             'access_token' => 'session',
             'token_type' => 'session',
+            'device_warning' => $devWarn,
             'user' => fk_user_public($user),
             'subscription' => fk_sub_public(fk_subscription((int) $user['id'])),
             'license' => $license,
@@ -382,6 +391,9 @@ switch ($action) {
         $payload = api_json();
         $email = strtolower(trim((string) ($payload['email'] ?? '')));
         $password = (string) ($payload['password'] ?? '');
+        /* مرورگر شناسهٔ دستگاه را در هدر X-Device-Id هم می‌فرستد؛ اگر
+           بدنه نداشت، از همان استفاده می‌کنیم. */
+        $deviceHeader = trim((string) ($_SERVER['HTTP_X_DEVICE_ID'] ?? ''));
         $user = fk_find('users', 'email', $email);
 
         if ($user) {
@@ -411,6 +423,18 @@ switch ($action) {
         if (fk_needs_rehash((string) $user['password_hash'])) {
             fk_update('users', (int) $user['id'], array('password_hash' => fk_hash_password($password)));
         }
+        /* ── محدودیت دستگاه ──
+           اگر سقف پر باشد، ورود را *نمی‌بندیم*. چرا؟ چون کاربری که روی
+           دستگاه دوم است، برای آزادکردن جا باید به «دستگاه‌های من» برسد
+           — و برای رسیدن، باید وارد شود. بستن ورود، کاربر را در حلقهٔ
+           بسته می‌گذاشت: نه وارد می‌شد، نه می‌توانست دستگاهی حذف کند.
+           پایتون هم همین کار را می‌کند (خطا را می‌بلعد)، ولی بی‌صدا؛
+           اینجا هشدار برمی‌گردانیم تا رابط به کاربر بگوید. */
+        $devWarn = fk_register_device(
+            $user,
+            trim((string) ($payload['device_id'] ?? $deviceHeader)),
+            trim((string) ($payload['platform'] ?? ''))
+        );
         fk_login_user($user);
         api_rate_clear('login');
         fk_ensure_subscription((int) $user['id']);
@@ -419,6 +443,7 @@ switch ($action) {
         api_out(array(
             'access_token' => 'session',
             'token_type' => 'session',
+            'device_warning' => $devWarn,
             'user' => fk_user_public($user),
             'subscription' => fk_sub_public(fk_subscription((int) $user['id'])),
         ));
@@ -512,6 +537,21 @@ switch ($action) {
             api_fail('دستگاه یافت نشد.', 404);
         }
         fk_delete('devices', (int) $row['id']);
+        /* فقط پاک‌کردن ردیف کافی نیست: سقف دستگاه از فهرست
+           subscriptions.devices خوانده می‌شود. اگر شناسه از آن‌جا هم
+           حذف نشود، جای دستگاه برای همیشه پر می‌ماند و کاربری که با
+           پیام «از یکی از دستگاه‌ها خارج شوید» راهنمایی شده، هیچ راهی
+           برای آزادکردن جا ندارد. */
+        $sub = fk_ensure_subscription((int) $user['id']);
+        if ($sub) {
+            $keep = array();
+            foreach (explode(',', (string) ($sub['devices'] ?? '')) as $x) {
+                if ($x !== '' && $x !== $id) {
+                    $keep[] = $x;
+                }
+            }
+            fk_update('subscriptions', (int) $sub['id'], array('devices' => implode(',', $keep)));
+        }
         fk_audit($user, 'device_remove', 'device', $id, 'حذف دستگاه');
         api_out(array('ok' => true));
 

@@ -434,6 +434,74 @@ function fk_logout_user(): void
 }
 
 /** آیا کاربر جاری مدیر است؟ */
+/**
+ * ثبت دستگاه در ورود — هم‌ارز register_device پایتون
+ * ==================================================
+ * تا پیش از این، ورود پارامتر device_id را می‌پذیرفت و دور می‌ریخت.
+ * نتیجه: «دستگاه‌های من» همیشه خالی بود، محدودیت دستگاه هیچ‌وقت
+ * اعمال نمی‌شد، و کاربر می‌توانست بی‌نهایت دستگاه داشته باشد — یعنی
+ * یک بخش کامل از اشتراک فقط روی کاغذ بود.
+ *
+ * منطق عیناً همان پایتون است:
+ *   • اگر شناسه تازه بود و تعداد به سقف طرح رسیده و کاربر عادی است →
+ *     خطای ۴۰۳ با پیام روشن (مالک/مدیر محدود نمی‌شوند).
+ *   • شناسه در فهرست devices اشتراک ثبت می‌شود.
+ *   • ردیف devices به‌روز یا ساخته می‌شود (last_seen تازه).
+ *
+ * @return string پیام خطا، یا رشتهٔ خالی اگر موفق بود
+ */
+function fk_register_device(array $user, string $deviceId, string $platform = ''): string
+{
+    $deviceId = preg_replace('/[^A-Za-z0-9._:\-]/', '', $deviceId) ?? '';
+    if ($deviceId === '' || strlen($deviceId) > 64) {
+        return '';   /* بدون شناسه، کاری لازم نیست (مثل پایتون) */
+    }
+    $uid = (int) ($user['id'] ?? 0);
+
+    $sub = fk_ensure_subscription($uid);
+    if ($sub) {
+        $ids = array_values(array_filter(explode(',', (string) ($sub['devices'] ?? '')), 'strlen'));
+        if (!in_array($deviceId, $ids, true)) {
+            $limit = 1;
+            if (!empty($sub['plan_id'])) {
+                $plan = fk_row('plans', (int) $sub['plan_id']);
+                if ($plan) {
+                    $limit = max(1, (int) ($plan['max_devices'] ?? 1));
+                }
+            }
+            $isAdmin = in_array((string) ($user['role'] ?? ''), array('owner', 'admin'), true);
+            if (count($ids) >= $limit && !$isAdmin) {
+                return 'تعداد دستگاه‌های مجاز این اشتراک تکمیل شده است. '
+                    . 'از یکی از دستگاه‌های قبلی خارج شوید یا با پشتیبانی تماس بگیرید.';
+            }
+            $ids[] = $deviceId;
+            fk_update('subscriptions', (int) $sub['id'], array('devices' => implode(',', $ids)));
+        }
+    }
+
+    $found = fk_where('devices', static function (array $d) use ($uid, $deviceId): bool {
+        return (int) ($d['user_id'] ?? 0) === $uid && (string) ($d['device_id'] ?? '') === $deviceId;
+    });
+    $row = $found ? $found[0] : null;
+    if ($row) {
+        $upd = array('last_seen' => fk_now());
+        if ($platform !== '') {
+            $upd['platform'] = substr($platform, 0, 60);
+        }
+        fk_update('devices', (int) $row['id'], $upd);
+    } else {
+        fk_insert('devices', array(
+            'user_id' => $uid,
+            'device_id' => $deviceId,
+            'label' => 'دستگاه ' . substr($deviceId, -4),
+            'platform' => substr($platform, 0, 60),
+            'last_seen' => fk_now(),
+            'created_at' => fk_now(),
+        ));
+    }
+    return '';
+}
+
 function fk_is_admin(?array $user = null): bool
 {
     $user = $user ?? fk_user();

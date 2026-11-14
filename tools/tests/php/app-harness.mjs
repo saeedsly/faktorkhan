@@ -260,21 +260,28 @@ export class Session {
     return res;
   }
 
-  /** ثبت‌نام/ورود با ایمیل مشخص و نگه‌داشتن نشست */
+  /** ثبت‌نام/ورود با ایمیل مشخص و نگه‌داشتن نشست
+   *
+   * هر فیلد اضافی (`extra`) به بدنهٔ درخواست می‌رود. پیش‌تر فقط
+   * company/phone/license_key منتقل می‌شد و device_id بی‌صدا دور
+   * ریخته می‌شد — آزمون دستگاه‌ها بدون اینکه کد مشکل داشته باشد
+   * شکست می‌خورد و به من می‌گفت جای اشتباهی را می‌گردم. */
   async register(email, password = "Test@12345", extra = {}) {
     return this.call({
       method: "POST", action: "register",
       json: {
-        full_name: extra.full_name || "کاربر تست",
+        full_name: "کاربر تست",
+        company: "", phone: "", license_key: "",
+        ...extra,
         email, password,
-        company: extra.company || "",
-        phone: extra.phone || "",
-        license_key: extra.license_key || "",
       },
     });
   }
 
-  async login(email, password = "Test@12345") {
-    return this.call({ method: "POST", action: "login", json: { email, password } });
+  async login(email, password = "Test@12345", extra = {}) {
+    return this.call({
+      method: "POST", action: "login",
+      json: { ...extra, email, password },
+    });
   }
 }
