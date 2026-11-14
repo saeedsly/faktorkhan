@@ -2,10 +2,10 @@
 
 همهٔ لینک‌ها مستقیم و بدون ورود به حساب کار می‌کنند.
 
-## ۱) نسخهٔ PHP برای WAMP/htdocs — همان پنل پایتون، با PHP (۴۵۲ کیلوبایت)
+## ۱) نسخهٔ PHP برای WAMP/htdocs — همان پنل پایتون، با PHP (۴۶۹ کیلوبایت)
 
 **دانلود:**
-https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-php-htdocs.zip
+https://github.com/saeedsly/faktorkhan/raw/downloads/downloads/faktorkhan-php-htdocs.zip
 
 **نصب (۳۰ ثانیه):**
 
@@ -53,7 +53,7 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 ## ۲) نسخهٔ کامل ویندوز ۱۰/۱۱ — پایتون همراه (۳۵ مگابایت)
 
 **دانلود:**
-https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-1.0.0-WINDOWS-PORTABLE.zip
+https://github.com/saeedsly/faktorkhan/raw/downloads/downloads/faktorkhan-1.0.0-WINDOWS-PORTABLE.zip
 
 **نصب:**
 
@@ -63,10 +63,10 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 
 ---
 
-## ۳) کد منبع کامل (۷۱۷ کیلوبایت)
+## ۳) کد منبع کامل (۱٫۲ مگابایت)
 
 **دانلود:**
-https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/faktorkhan-v1.0.0.zip
+https://github.com/saeedsly/faktorkhan/raw/downloads/downloads/faktorkhan-v1.0.0.zip
 
 **برای ویندوز ۷:** پایتون ۳.۸.۱۰ را از python.org نصب کنید (تیک *Add Python to PATH*)،
 بعد این زیپ را باز کنید و `START-WINDOWS.bat` را اجرا کنید.
@@ -76,21 +76,31 @@ https://github.com/saeedsly/faktorkhan/raw/arena/9e0e2486-faktorkhan/downloads/f
 
 ## ۴) دانلود کل مخزن (همهچیز، همیشه آخرین نسخه)
 
-https://codeload.github.com/saeedsly/faktorkhan/zip/refs/heads/arena/9e0e2486-faktorkhan
+https://codeload.github.com/saeedsly/faktorkhan/zip/refs/heads/downloads
 
 یا از صفحهٔ مخزن: **Code → Download ZIP**
-https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
+https://github.com/saeedsly/faktorkhan/tree/downloads
 
 ---
 
 ## اگر لینک باز نشد
 
+> **چرا این لینک‌ها روی شاخهٔ `downloads` هستند و نه شاخهٔ کاری؟**
+> نام شاخه‌های کاری اسلش دارد (`arena/9e0e2486-faktorkhan`). در نشانی
+> `/raw/{شاخه}/{مسیر}` گیت‌هاب نمی‌تواند تشخیص دهد اسلش بخشی از نام
+> شاخه است یا جداکنندهٔ مسیر، پس لینک شکسته می‌شود. شاخهٔ `downloads`
+> نامش اسلش ندارد، برای همین لینک‌ها بدون ابهام کار می‌کنند.
+
 | مشکل | راه‌حل |
 |---|---|
-| لینک ۴۰۴ می‌دهد | شاخه/فایل جابه‌جا شده؛ از لینک ۴ (دانلود کل مخزن) استفاده کنید و فایل را در پوشهٔ `downloads` ببینید |
+| لینک ۴۰۴ می‌دهد | از لینک ۴ (دانلود کل مخزن) استفاده کنید و فایل را در پوشهٔ `downloads` ببینید |
 | دانلود در مرورگر ویندوز ۷ شروع نمی‌شود | کلیک راست → Save link as…، یا از Chrome/Firefox استفاده کنید |
 | فایل ناقص دانلود شد | حجم `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` باید ۳۴٫۵ مگابایت باشد؛ دوباره بگیرید |
 | سرعت کم | از `codeload` (لینک ۴) استفاده کنید که معمولاً سریع‌تر است |
+
+**صفحهٔ ریلیز:** <https://github.com/saeedsly/faktorkhan/releases/tag/v1.0.0>
+(فایل‌های پیوست ریلیز در محیط ساخت قابل آپلود نبودند؛ زیپ‌ها همان‌جا در
+پوشهٔ `downloads` مخزن هستند و لینک‌های بالا مستقیم به آن‌ها می‌روند.)
 
 ---
 
@@ -98,6 +108,6 @@ https://github.com/saeedsly/faktorkhan/tree/arena/9e0e2486-faktorkhan
 
 | فایل | حجم | برای |
 |---|---|---|
-| `faktorkhan-php-htdocs.zip` | ۴۵۲ KB | WAMP / XAMPP — ۲۷ فایل، پنل کامل (ویندوز ۷ ✅) |
+| `faktorkhan-php-htdocs.zip` | ۴۶۹ KB | WAMP / XAMPP — ۲۷ فایل، پنل کامل (ویندوز ۷ ✅) |
 | `faktorkhan-1.0.0-WINDOWS-PORTABLE.zip` | ۳۴٫۵ MB | ویندوز ۱۰/۱۱ (پایتون همراه) |
-| `faktorkhan-v1.0.0.zip` | ۱٫۱ MB | کد منبع کامل — پایتون + PHP (با پایتون ۳.۸ روی ویندوز ۷) |
+| `faktorkhan-v1.0.0.zip` | ۱٫۲ MB | کد منبع کامل — پایتون + PHP (با پایتون ۳.۸ روی ویندوز ۷) |
