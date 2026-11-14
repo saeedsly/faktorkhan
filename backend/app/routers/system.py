@@ -27,6 +27,10 @@ def meta():
     return {
         "app": {
             **app_meta(),
+            # نام برنامه از تنظیمات، نه از ثابت: مدیر می‌تواند در پنل
+            # عوضش کند. پیش‌تر ذخیره می‌شد و هیچ‌جا خوانده نمی‌شد —
+            # یعنی پیام «ذخیره شد» دروغ بود. نسخهٔ PHP هم اصلاح شد.
+            "name": get_cfg("app_name", "") or app_meta()["name"],
             "subtitle": branding.APP_SUBTITLE,
         },
         "owner": {

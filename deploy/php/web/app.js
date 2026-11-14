@@ -3089,7 +3089,9 @@ const App = (() => {
     $("#page-title").textContent = route.title;
     $("#page-subtitle").textContent = route.subtitle;
     $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.route === name));
-    document.title = `${route.title} | فاکتورخوان`;
+    /* نام برنامه از تنظیمات می‌آید (مدیر می‌تواند عوضش کند)؛
+       «فاکتورخوان» فقط پیش‌فرض است. */
+    document.title = `${route.title} | ${State.meta?.app?.name || "فاکتورخوان"}`;
     try {
       await route.render(view);
     } catch (err) {

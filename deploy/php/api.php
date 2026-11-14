@@ -196,10 +196,18 @@ switch ($action) {
             }
         }
         $owner['contact'] = $contact;
+        /* نام برنامه از تنظیمات خوانده می‌شود، نه از ثابت.
+           مدیر در «پنل مدیریت → تنظیمات» نام را عوض می‌کرد، پیام موفقیت
+           می‌گرفت، و رابط همان نام قبلی را نشان می‌داد — یعنی تنظیم
+           بی‌اثر بود. ثابت فقط پیش‌فرض است. */
+        $appName = trim((string) fk_cfg_get('app_name', ''));
+        if ($appName === '') {
+            $appName = FK_APP_TITLE;
+        }
         api_out(array(
             'app' => array(
-                'name' => FK_APP_TITLE,
-                'title' => FK_APP_TITLE,
+                'name' => $appName,
+                'title' => $appName,
                 'subtitle' => FK_APP_SUBTITLE,
                 'version' => FK_APP_VERSION,
                 'edition' => FK_APP_EDITION,
@@ -360,8 +368,26 @@ switch ($action) {
 
         $license = null;
         $rawKey = trim((string) ($payload['license_key'] ?? ''));
+
+        /* ── الزام کد اشتراک ──
+           مدیر می‌تواند در تنظیمات «کد اشتراک الزامی» را روشن کند.
+           پیش از این، این گزینه فقط در متا گزارش می‌شد و هیچ‌جا بررسی
+           نمی‌شد: کاربر بدون کد ثبت‌نام می‌کرد و تنظیم بی‌اثر بود.
+           حالا اگر روشن باشد و کد نیامده باشد، ثبت‌نام رد می‌شود —
+           جز برای نخستین حساب، چون مالک باید بتواند وارد شود و اولین
+           کد را بسازد. اگر کد آمده ولی نامعتبر است، حساب پاک می‌شود
+           تا ثبت‌نام نیمه‌کاره نماند. */
+        $licenseRequired = fk_cfg_bool('license_required', false);
+        if ($licenseRequired && !$isFirst && $rawKey === '') {
+            fk_delete('users', (int) $user['id']);
+            api_fail('برای ثبت‌نام، کد اشتراک لازم است. کد را از فروشنده دریافت کنید.', 403);
+        }
         if ($rawKey !== '') {
             $res = fk_license_redeem((int) $user['id'], $rawKey);
+            if (!$res['ok'] && $licenseRequired && !$isFirst) {
+                fk_delete('users', (int) $user['id']);
+                api_fail($res['message'], 409);
+            }
             $license = $res['ok'] ? $res : array('error' => $res['message']);
         }
 

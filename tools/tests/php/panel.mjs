@@ -461,6 +461,60 @@ console.log("\n۹) توکن ابری: ثبت و حذف");
   ck("طول صفر شد", st.data?.token_length === 0, String(st.data?.token_length));
 }
 
+console.log("\n۱۰) تنظیمات پنل واقعاً اثر می‌کنند");
+{
+  /* سه کلید در «تنظیمات» بود که ذخیره می‌شد و هیچ‌جا خوانده نمی‌شد:
+     نام برنامه، ثبت‌نام باز، کد اشتراک الزامی. یعنی مدیر تنظیم می‌کرد،
+     پیام موفقیت می‌گرفت و هیچ اتفاقی نمی‌افتاد. */
+  const save = await owner.call({ method: "POST", action: "admin-settings",
+    json: { app_name: "فاکتورخوان سازمانی", registration_open: "1", license_required: "0" } });
+  ck("تنظیمات ذخیره شد", !!(save.data && save.data.ok), (save.data?.detail || "").slice(0, 40));
+
+  const meta = await owner.call({ action: "meta" });
+  ck("نام برنامه از تنظیمات خوانده شد", meta.data?.app?.name === "فاکتورخوان سازمانی",
+     String(meta.data?.app?.name));
+
+  // ثبت‌نام باز
+  const open1 = srv.session();
+  const reg1 = await open1.call({ method: "POST", action: "register",
+    json: { email: "open@cfg.local", password: "Test@12345", full_name: "باز" } });
+  ck("با ثبت‌نام باز، حساب ساخته شد", !!(reg1.data && reg1.data.user));
+
+  await owner.call({ method: "POST", action: "admin-settings", json: { registration_open: "0" } });
+  const shut = srv.session();
+  const reg2 = await shut.call({ method: "POST", action: "register",
+    json: { email: "shut@cfg.local", password: "Test@12345", full_name: "بسته" } });
+  ck("با ثبت‌نام بسته، رد شد", /بسته است/.test(reg2.data?.detail || ""),
+     (reg2.data?.detail || "").slice(0, 45));
+
+  // کد الزامی
+  await owner.call({ method: "POST", action: "admin-settings",
+    json: { registration_open: "1", license_required: "1" } });
+  const needKey = srv.session();
+  const reg3 = await needKey.call({ method: "POST", action: "register",
+    json: { email: "nokey@cfg.local", password: "Test@12345", full_name: "بی‌کد" } });
+  ck("بدون کد، ثبت‌نام رد شد", /کد اشتراک لازم است/.test(reg3.data?.detail || ""),
+     (reg3.data?.detail || "").slice(0, 45));
+  const check = await owner.call({ action: "admin-users", query: { q: "nokey" } });
+  ck("حساب نیمه‌کاره ساخته نشد", (check.data?.items || []).length === 0,
+     `${(check.data?.items || []).length} کاربر`);
+
+  // با کد درست
+  const plans = await owner.call({ action: "plans" });
+  const pid = (plans.data?.items || [])[0]?.id;
+  const made = await owner.call({ method: "POST", action: "admin-keys-create",
+    json: { plan_id: pid, count: 1 } });
+  const key = (made.data?.keys || [])[0];
+  if (key) {
+    const withKey = srv.session();
+    const reg4 = await withKey.call({ method: "POST", action: "register",
+      json: { email: "withkey@cfg.local", password: "Test@12345", full_name: "باکد", license_key: key } });
+    ck("با کد معتبر، ثبت‌نام موفق", !!(reg4.data && reg4.data.user),
+       (reg4.data?.detail || "").slice(0, 45));
+  }
+  await owner.call({ method: "POST", action: "admin-settings", json: { license_required: "0" } });
+}
+
 console.log("\n" + "═".repeat(64));
 console.log(fails === 0 ? `✓ همهٔ ${checks} بررسی موفق` : `✗ ${fails} از ${checks} بررسی ناموفق`);
 console.log("═".repeat(64));

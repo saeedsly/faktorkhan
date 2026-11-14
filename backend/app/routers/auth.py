@@ -28,6 +28,7 @@ from ..security import (
     verify_password,
 )
 from ..serializers import subscription_public, user_public
+from ..services.config_store import cfg_bool, get_cfg
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -73,13 +74,25 @@ def _apply_license(db: Session, user: User, raw_key: str) -> dict:
 @router.post("/register", status_code=201)
 def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
     rate_limit(request, "register", limit=10, window=300)
-    if not settings.ALLOW_REGISTRATION:
+    # تنظیم زندهٔ پنل، نه مقدار ثابت: پیش‌تر فقط settings خوانده می‌شد
+    # و کلید «ثبت‌نام باز است» در پنل مدیریت هیچ اثری نداشت.
+    if not cfg_bool("registration_open", settings.ALLOW_REGISTRATION):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "ثبت‌نام در این نسخه بسته است. با پشتیبانی تماس بگیرید.")
     email = payload.email.lower().strip()
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "این ایمیل قبلاً ثبت شده است.")
 
     is_first = db.query(User).count() == 0
+
+    # الزام کد اشتراک (تنظیم زندهٔ پنل). پیش‌تر این کلید فقط در متا
+    # گزارش می‌شد و هیچ‌جا اعمال نمی‌شد؛ کاربر بدون کد ثبت‌نام می‌کرد.
+    # نخستین حساب معاف است تا مالک بتواند وارد شود و اولین کد را بسازد.
+    license_required = cfg_bool("license_required", settings.REQUIRE_LICENSE)
+    submitted_key = payload.license_key.strip()
+    if license_required and not is_first and not submitted_key:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "برای ثبت‌نام، کد اشتراک لازم است. کد را از فروشنده دریافت کنید.")
+
     user = User(
         full_name=payload.full_name.strip(),
         email=email,
@@ -104,10 +117,15 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     db.commit()
 
     license_info = None
-    if payload.license_key.strip():
+    if submitted_key:
         try:
-            license_info = _apply_license(db, user, payload.license_key)
+            license_info = _apply_license(db, user, submitted_key)
         except HTTPException as exc:
+            if license_required and not is_first:
+                # ثبت‌نام نیمه‌کاره نماند
+                db.delete(user)
+                db.commit()
+                raise
             license_info = {"error": exc.detail}
 
     audit(db, user, "register", "user", user.id, "ثبت‌نام کاربر جدید", request)
