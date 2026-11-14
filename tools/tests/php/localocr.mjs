@@ -230,6 +230,34 @@ echo json_encode(array(
   ck("مبلغ کل ۶۰۰٬۰۰۰", j.total === 600000, String(j.total));
 }
 
+console.log("\n۸) فایل متنی — قابلیتی که از هیچ مسیری در دسترس نبود");
+/* موتور محلی از قبل txt/csv/md/json را می‌خواند و «قابلیت‌ها» هم
+   local.text=true اعلام می‌کرد، ولی لیست سفید آپلود این قالب‌ها را رد
+   می‌کرد. پیاده‌سازی کامل بود و کاربر هیچ راهی به آن نداشت — دقیقاً
+   همان «نیمه‌کاره» که نباید بماند. */
+{
+  const txt = [
+    "فروشنده: شرکت آفتاب",
+    "خریدار: آقای رضایی",
+    "کالا        تعداد    قیمت      جمع",
+    "کابل شبکه     2      150000    300000",
+    "جمع کل: 300000 ریال",
+  ].join("\n");
+  const r = await runLocal("note.txt", Buffer.from(txt, "utf8"), "note.txt");
+  ck("متن فایل متنی خوانده شد", /آفتاب/.test(r.text || ""), (r.text || "").slice(0, 40));
+  ck("کار done شد", r.status === "done", String(r.status));
+}
+{
+  /* نگهبان ساختاری: اگر کسی دوباره txt را از لیست سفید بردارد،
+     آزمون می‌شکند — وگرنه این باگ بی‌صدا برمی‌گردد. */
+  const api = fs.readFileSync(path.join(SRC, "api.php"), "utf8");
+  const blk = api.slice(api.indexOf("$allowed = array("), api.indexOf("$allowed = array(") + 400);
+  for (const ext of ["txt", "csv", "md", "json"]) {
+    ck(`«${ext}» در لیست سفید آپلود هست`, new RegExp(`'${ext}'`).test(blk));
+  }
+  ck("پیام خطا قالب متنی را هم نام می‌برد", /فایل متنی/.test(api));
+}
+
 console.log("\n" + "═".repeat(64));
 console.log(fails === 0 ? `✓ همهٔ ${checks} بررسی موتور محلی موفق` : `✗ ${fails} از ${checks} بررسی ناموفق`);
 console.log("═".repeat(64));

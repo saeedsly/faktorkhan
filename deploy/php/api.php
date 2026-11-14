@@ -673,10 +673,17 @@ switch ($action) {
         $provider = (string) (api_input('provider', 'cloud') ?: 'cloud');
         $name = (string) ($file['name'] ?? 'document');
         $ext = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+        /* قالب‌های متنی هم پذیرفته می‌شوند.
+           چرا: موتور محلی (job_tick → fk_pdf_extract_text) از قبل
+           txt/csv/md/json را می‌خواند و «قابلیت‌ها» هم `local.text=true`
+           اعلام می‌کرد — ولی همین لیست سفید جلوی آپلود را می‌گرفت. یعنی
+           قابلیتی که کامل پیاده شده بود، از هیچ مسیری در دسترس نبود و
+           کاربر فقط پیام «قالب مجاز نیست» می‌دید. */
         $allowed = array('pdf', 'jpg', 'jpeg', 'png', 'bmp', 'tif', 'tiff', 'webp',
-                         'mp3', 'wav', 'm4a', 'mp4', 'ogg', 'flac', '3gp', 'mpeg');
+                         'mp3', 'wav', 'm4a', 'mp4', 'ogg', 'flac', '3gp', 'mpeg',
+                         'txt', 'csv', 'md', 'json');
         if (!in_array($ext, $allowed, true)) {
-            api_fail('قالب فایل مجاز نیست (PDF، تصویر یا فایل صوتی/تصویری).', 400);
+            api_fail('قالب فایل مجاز نیست (PDF، تصویر، فایل متنی یا صوتی/تصویری).', 400);
         }
         $maxMb = (int) fk_cfg_get('max_upload_mb', 25);
         if ((int) ($file['size'] ?? 0) > $maxMb * 1024 * 1024) {

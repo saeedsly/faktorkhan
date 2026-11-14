@@ -22,7 +22,12 @@ from ..services.parser import parse_invoice
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
 
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp",
-               ".mp3", ".wav", ".m4a", ".mp4", ".ogg", ".flac", ".3gp", ".mpeg"}
+               ".mp3", ".wav", ".m4a", ".mp4", ".ogg", ".flac", ".3gp", ".mpeg",
+               # فایل متنی: local_ocr از قبل می‌خواند و capabilities هم
+               # local.text=true اعلام می‌کرد، ولی همین مجموعه جلوی
+               # آپلود را می‌گرفت — قابلیت کامل بود و هیچ مسیری به آن
+               # نمی‌رسید. نسخهٔ PHP هم همین را دارد.
+               ".txt", ".csv", ".md", ".json"}
 
 
 def _user_dir(user_id: int) -> Path:
@@ -34,7 +39,7 @@ def _user_dir(user_id: int) -> Path:
 def _save_upload(upload: UploadFile, user: User) -> Path:
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in ALLOWED_EXT:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "قالب فایل مجاز نیست (PDF، تصویر یا فایل صوتی/تصویری).")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "قالب فایل مجاز نیست (PDF، تصویر، فایل متنی یا صوتی/تصویری).")
     dest = _user_dir(user.id) / f"{uuid.uuid4().hex}{suffix}"
     size = 0
     limit = settings.MAX_UPLOAD_MB * 1024 * 1024

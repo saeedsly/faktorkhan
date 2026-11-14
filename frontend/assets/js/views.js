@@ -164,7 +164,10 @@ const Views = (() => {
     catch (err) { el.innerHTML = emptyState("سرویس در دسترس نیست", err.message); return; }
 
     const cloudReady = caps.cloud.configured;
-    const localReady = caps.local.pdf || caps.local.image;
+    /* `text` هم باید حساب شود: سروری که PDF و فایل متنی می‌خواند
+       «آماده» است، حتی اگر تصویر نخواند. بدون آن، کاربر پیام «موتور
+       محلی آماده نیست» می‌دید در حالی که آپلود PDF و txt کار می‌کرد. */
+    const localReady = caps.local.pdf || caps.local.image || caps.local.text;
     const draft = {
       file: null,
       engine: cloudReady ? "cloud" : "local",
@@ -200,7 +203,7 @@ const Views = (() => {
                   <span>PDF</span><span>JPG</span><span>PNG</span><span>BMP</span><span>TIFF</span>
                   <span>MP3</span><span>WAV</span><span>MP4</span>
                 </div>
-                <input type="file" id="file-input" class="hidden" accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp">
+                <input type="file" id="file-input" class="hidden" accept=".pdf,.jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp,.mp3,.wav,.m4a,.mp4,.ogg,.flac,.3gp,.txt,.csv,.md,.json">
               </div>
               <div id="file-chip"></div>
             </div>
