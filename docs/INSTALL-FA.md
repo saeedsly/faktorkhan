@@ -33,8 +33,12 @@
 - **راه گیت‌هاب:** این نشانی را در مرورگر باز کنید:
 
   ```
-  https://github.com/saeedsly/faktorkhan/archive/refs/heads/arena/9e0e2486-faktorkhan.zip
+  https://codeload.github.com/saeedsly/faktorkhan/zip/refs/heads/downloads
   ```
+
+  > شاخهٔ `downloads` عمداً نامش اسلش ندارد. نام شاخه‌های کاری
+  > (`arena/9e0e2486-faktorkhan`) اسلش دارد و در نشانی‌های گیت‌هاب
+  > مبهم می‌شود — همان چیزی که لینک‌های قبلی را ۴۰۴ می‌کرد.
 
 سپس فایل ZIP را **از حالت فشرده خارج کنید** و پوشه را در مسیر ساده‌ای بگذارید:
 
