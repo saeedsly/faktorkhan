@@ -1264,9 +1264,13 @@ function api_admin_user(array $admin, int $id, array $payload): array
     $patch = array();
     if (isset($payload['is_active'])) {
         $patch['is_active'] = (bool) $payload['is_active'];
-        if (!$patch['is_active']) {
-            $_SESSION['revoked'] = true;
-        }
+        /* این‌جا قبلاً $_SESSION['revoked'] = true گذاشته می‌شد. دو
+           اشکال داشت: (۱) روی نشست *خودِ مدیر* نوشته می‌شد نه کاربر
+           هدف، و (۲) هیچ‌جا خوانده نمی‌شد — پرچمی که فقط نوشته می‌شد.
+
+           واقعیت این است که نیازی هم نیست: fk_user() در هر درخواست
+           is_active را از نو می‌خواند، پس با غیرفعال‌شدن، نشست کاربر
+           همان لحظه بی‌اعتبار می‌شود. */
     }
     if (!empty($payload['role']) && in_array((string) $payload['role'], array('admin', 'user', 'owner'), true)) {
         if ((string) $payload['role'] === 'owner' && !fk_is_owner($admin)) {
